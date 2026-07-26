@@ -1,89 +1,127 @@
 ---
 name: rsql
-description: Build, review, debug, document, benchmark, or operate the rsql multi-tenant SQLite HTTP server and its Go and TypeScript clients. Use whenever work touches rsql namespaces, schema or row APIs, filtering, read-only SQL, SSE, storage quotas, namespace overview telemetry, gateway forwarding, CLI configuration, package boundaries, tests, performance scenarios, or files under cmd/rsql, internal, client, docs, or skills/rsql.
+description: Use, integrate, deploy, or operate the rsql multi-tenant SQLite HTTP server and its Go and TypeScript clients. Use when provisioning namespace databases, designing a tenant gateway, calling schema or row APIs, filtering and querying data, consuming SSE, enforcing storage quotas, reading namespace overview telemetry, importing or exporting databases, configuring the CLI, troubleshooting requests, or planning rsql hosting.
 ---
 
 # rsql
 
-Work from the live implementation and tests. rsql is pre-1.0, so prose and
-older examples can drift from the current contract.
+Help application developers and operators use rsql safely. Start from the
+public HTTP and client contracts. Read implementation internals only when they
+explain observable behavior or a production problem.
 
-## First checks
+## Choose the path
 
-1. Read `git status --short` and preserve unrelated work.
-2. Locate the affected route, service method, store operation, client method,
-   and tests before proposing a change.
-3. Read only the references relevant to the task.
-4. Treat code and tests as authoritative when a reference or user-facing page
-   disagrees.
+1. For a first local database, follow the quickstart below and then read
+   `references/http-api.md`.
+2. For a Go service or gateway, read `references/clients.md` and
+   `references/tenancy-and-operations.md`.
+3. For a Bun, Node, or browser-compatible TypeScript integration, read
+   `references/clients.md`.
+4. For schema, rows, filters, search, read-only SQL, or quotas, read
+   `references/storage-and-queries.md`.
+5. For deployment, backups, telemetry, scaling, or recovery, read
+   `references/tenancy-and-operations.md`.
+6. For a failing or slow integration, read `references/troubleshooting.md`.
+7. Read `references/architecture.md` only when internal request flow or
+   concurrency explains a user-visible behavior.
 
-Useful entry points:
+## Non-negotiable trust boundary
+
+The rsql bearer token is a server-wide administrative credential. It can access
+every namespace.
+
+- Keep rsql on a private network.
+- Never ship the token to an untrusted browser or tenant container.
+- Authenticate tenants in a gateway.
+- Resolve the allowed namespace from trusted application state.
+- Construct the upstream rsql path in the gateway.
+- Do not expose `/v1/namespaces` to tenants.
+
+The tenant-facing database surface starts below `/v1/{namespace}`. The
+orchestrator owns namespace provisioning and lifecycle.
+
+## Quick local start
 
 ```sh
-sed -n '1,280p' internal/httpapi/handler.go
-sed -n '1,220p' internal/domain/types.go
-sed -n '1,260p' internal/domain/overview.go
-rg -n 'func \(s \*Service\)|func [A-Z]' internal/service internal/store
-rg -n 'export interface|export type' client/src/types.ts
+go run ./cmd/rsql serve \
+  --listen=127.0.0.1:8080 \
+  --api-token=dev-token \
+  --data-dir=./data
 ```
 
-## Reference routing
+```sh
+curl -s -X POST http://127.0.0.1:8080/v1/namespaces \
+  -H 'Authorization: Bearer dev-token' \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"demo"}'
+```
 
-- HTTP endpoints, status codes, payloads, headers, and event contracts:
-  `references/http-api.md`
-- Go packages, request flow, lifecycle, and responsibility boundaries:
-  `references/architecture.md`
-- Public Go and TypeScript APIs, streaming, and gateway forwarding:
-  `references/clients.md`
-- SQLite schema, row validation, filtering, query safety, and write semantics:
-  `references/storage-and-queries.md`
-- Isolation, quotas, telemetry, configuration, scaling, and recovery:
-  `references/tenancy-and-operations.md`
-- Required tests, benchmarks, documentation checks, and completion gates:
-  `references/testing-and-performance.md`
+All `/v1/*` calls need `Authorization: Bearer <token>`. `/healthz` and
+`/metrics` are public operational endpoints.
 
-## Architecture invariants
+## Integration defaults
 
-1. Keep `internal/httpapi` transport-focused.
-2. Keep orchestration and domain behavior in `internal/service`.
-3. Keep SQLite construction and persistence in `internal/store/sqlite`.
-4. Keep namespace registry persistence in `internal/store/control`.
-5. Keep per-namespace pools, writer serialization, and eviction in
-   `internal/namespace`.
-6. Never expose internal SQLite objects or let a tenant select an arbitrary
-   namespace through gateway passthrough.
-7. Preserve the stable JSON error envelope: `error` and `message`.
-8. Treat the server-wide bearer token as an administrative credential.
-
-## Change workflow
-
-1. Identify whether the change affects the control plane
-   (`/v1/namespaces/...`), one namespace's data plane (`/v1/:ns/...`), or both.
-2. Trace the complete path from handler to service to store/runtime component.
-3. State isolation, atomicity, timeout, quota, and event side effects.
-4. Implement the smallest complete slice.
-5. Update both public clients when the HTTP contract changes.
-6. Update user documentation under `docs/en/` and the matching reference file
-   in this skill when behavior or architecture changes.
-7. Run the gates selected from `references/testing-and-performance.md`.
-
-## Client rules
-
-- Keep Go administration under `Client.Admin().Namespaces`.
+- Use `Client.Admin().Namespaces` in Go only from an orchestrator.
 - Bind application operations with `Client.Database(namespace)`.
-- Keep Go `Database.Forward` limited to namespace-scoped data-plane routes.
-- Preserve the TypeScript `client.namespaces` and `client.ns(namespace)` shape.
-- Stream exports and SSE. Do not introduce hidden buffering or automatic
-  retries.
-- Keep browser environment reads lazy; importing the TypeScript client must not
-  require `process.env`.
+- Use `Database.Forward` for streaming gateway passthrough of allowed
+  namespace-scoped routes.
+- Use `createRsqlClient({ url, token })` for explicit TypeScript configuration.
+- Treat the default TypeScript `rsql` export as server-side convenience; it
+  reads `RSQL_URL` and `RSQL_API_TOKEN` lazily.
+- Handle Go `*rsql.APIError` or TypeScript `RsqlResult<T>` by stable error code.
+- Stream exports and SSE; do not buffer complete database files in gateways.
+- Apply timeouts and cancellation at the caller.
 
-## Documentation rules
+## Namespace lifecycle
 
-- Keep the root README short and navigational.
-- Write user-facing documentation in English under `docs/en/`.
-- Give each Fibel page frontmatter with `title`, `navTitle`, `section`,
-  `order`, and `description`.
-- Keep internal implementation detail in this skill's references, not in
-  getting-started pages.
-- Verify examples against current route and client tests before finishing.
+Provision a namespace with the control plane, apply schema, then store its name
+in trusted tenant placement data. Use `config.max_db_size` for a page-granular
+storage quota. Show tenant storage and health through
+`GET /v1/{namespace}/overview`, not the administrative namespace list.
+
+For backups, stream `GET /v1/namespaces/{namespace}/export` to durable storage.
+Database and CSV imports remain administrative operations.
+
+## Query guidance
+
+- Prefer row APIs for ordinary application CRUD.
+- Use the shared filter grammar for lists, bulk mutations, and CSV export.
+- Use parameterized read-only SQL for joins and aggregates.
+- Create FTS indexes for large user-facing search workloads.
+- Treat SSE as live notification delivery, not a durable queue.
+
+## Response guidance
+
+Expected failures use JSON with `error` and `message`. Important codes include:
+
+- `unauthorized`
+- `namespace_not_found`
+- `table_not_found`
+- `validation_failed`
+- `sql_not_read_only`
+- `quota_exceeded`
+- `database_busy`
+
+Preserve `X-Request-ID` through gateways for log correlation.
+
+## Deep reference routing
+
+- Complete HTTP routes, statuses, payloads, headers, and events:
+  `references/http-api.md`
+- Go and TypeScript client APIs, streaming, and gateway forwarding:
+  `references/clients.md`
+- Schema, validation, filtering, query behavior, imports, exports, and quotas:
+  `references/storage-and-queries.md`
+- Hosting boundary, runtime configuration, telemetry, scaling, and recovery:
+  `references/tenancy-and-operations.md`
+- Common failures and performance diagnosis:
+  `references/troubleshooting.md`
+- Optional package and internal request-flow explanation:
+  `references/architecture.md`
+
+## If changing rsql itself
+
+This skill is primarily for rsql consumers. If a task explicitly modifies the
+rsql source, treat code and tests as authoritative, preserve the control-plane
+and data-plane boundary, update both clients when the HTTP contract changes,
+and update the matching reference and Fibel page.

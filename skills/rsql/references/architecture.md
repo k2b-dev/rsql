@@ -1,7 +1,7 @@
 # Architecture
 
-Use this reference for package placement, request tracing, lifecycle changes,
-and architecture reviews.
+Use this reference only when deployment planning, request tracing, lifecycle
+behavior, or a production issue requires implementation detail.
 
 ## System shape
 

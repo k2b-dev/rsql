@@ -3,35 +3,35 @@
   "evals": [
     {
       "id": 1,
-      "prompt": "Add a tenant-facing endpoint to rsql that lists every namespace and its current storage usage. Implement it in the most direct place.",
-      "expected_output": "The agent rejects the unsafe tenant-wide framing, identifies the control-plane boundary, and proposes or implements a namespace-scoped alternative without exposing the administrative token.",
+      "prompt": "I am building a Go gateway in front of rsql. My auth middleware gives me a user ID, which I resolve to a namespace. Show me the safe way to forward table CRUD and SSE without exposing namespace management or buffering responses.",
+      "expected_output": "The agent uses the Go database-scoped client and Forward helper, keeps namespace resolution and the admin token in the trusted gateway, explains allowed data-plane routes, and preserves streaming and cancellation.",
       "files": [],
       "expectations": [
-        "Distinguishes the namespace control plane from the tenant data plane",
-        "Does not expose cross-namespace fleet data to a tenant",
-        "Traces the change through handler, service, clients, tests, and docs"
+        "Keeps the server-wide token and namespace resolution inside the trusted gateway",
+        "Uses Client.Database and Database.Forward rather than exposing the control plane",
+        "Preserves streaming, request cancellation, and scoped route restrictions"
       ]
     },
     {
       "id": 2,
-      "prompt": "Add a new filter operator called starts_with to the rsql rows API and make it available in both clients.",
-      "expected_output": "The agent locates the shared filter builder and updates the HTTP contract, Go and TypeScript clients or query inputs, tests, Fibel docs, and skill reference while preserving SQL parameterization.",
+      "prompt": "Provision an rsql database for a tenant with a 5 GiB storage limit and explain which endpoint my admin UI should call to show usage, latency, errors, and whether the database is close to full.",
+      "expected_output": "The agent creates a namespace with max_db_size in bytes, uses the namespace overview endpoint for the UI, explains allocated-page quota semantics and supported windows, and keeps fleet administration separate.",
       "files": [],
       "expectations": [
-        "Keeps user values parameterized and identifiers validated",
-        "Covers row list, bulk mutations, and CSV export filter parity",
-        "Updates both clients, tests, and documentation"
+        "Configures max_db_size as 5 GiB in the namespace control plane",
+        "Uses the namespace-scoped overview endpoint with a supported time window",
+        "Explains quota, remaining storage, growth, latency, errors, and control-plane separation"
       ]
     },
     {
       "id": 3,
-      "prompt": "Investigate why one hot rsql tenant causes write latency for another tenant and recommend the smallest safe fix.",
-      "expected_output": "The agent uses the namespace manager and telemetry architecture to determine that writer locks are per namespace, checks shared resources before changing locking, and proposes evidence-driven tests or benchmarks.",
+      "prompt": "I want to use the rsql TypeScript client from a browser dashboard. Give me a safe integration shape, show typed row listing and SSE, and explain what to do with RSQL_URL and RSQL_API_TOKEN.",
+      "expected_output": "The agent does not put the administrative token in the browser, routes through an authenticated backend gateway, uses an explicit typed client against that gateway, demonstrates result handling and SSE cancellation, and explains lazy environment resolution.",
       "files": [],
       "expectations": [
-        "Recognizes that writer serialization is per namespace",
-        "Investigates shared process or storage bottlenecks instead of adding speculative locks",
-        "Uses overview telemetry and noisy-neighbor benchmarks as evidence"
+        "Does not expose RSQL_API_TOKEN to the browser",
+        "Uses an explicit typed TypeScript client against a trusted gateway and handles RsqlResult",
+        "Shows SSE consumption with cancellation or close behavior and correctly explains lazy env reads"
       ]
     }
   ]

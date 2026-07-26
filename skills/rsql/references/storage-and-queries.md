@@ -1,13 +1,13 @@
 # Storage and query behavior
 
-Use this reference for schema, row, filter, SQLite, transaction, query, CSV,
-and quota-related changes.
+Use this reference when designing schemas, validating rows, building filters,
+running SQL, importing or exporting CSV, or configuring storage quotas.
 
 ## Per-namespace database
 
-Each namespace owns one SQLite database file. Internal tables and metadata are
-created by `internal/store/sqlite.EnsureInternalSchema`. User APIs cannot
-address SQLite objects whose names begin with `_`.
+Each namespace owns one SQLite database file. rsql creates private tables and
+metadata that user APIs cannot address. SQLite object names beginning with `_`
+are reserved.
 
 The namespace manager opens:
 
@@ -33,14 +33,13 @@ Views use a read-only SQL definition. Mutations against views are rejected.
 Schema changes append to the internal changelog and publish schema SSE events.
 
 Generated-column formulas enter SQLite DDL and therefore use a strict
-allowlist. Review `validateGeneratedFormula` and its regression tests before
-changing this boundary.
+allowlist. Treat rejected formulas as unsupported rather than trying to bypass
+validation.
 
 ## Rows and validation
 
-The service resolves namespace configuration and executes store operations
-inside `WithRead` or `WithWrite`. Write validation and SQL mutation happen
-inside the serialized write callback.
+rsql applies namespace configuration before each operation. Write validation
+and SQL mutation happen inside one serialized write transaction.
 
 Bulk changes use one filter expression and return either counts or rows,
 depending on `Prefer`. Published SSE events include row data for single changes

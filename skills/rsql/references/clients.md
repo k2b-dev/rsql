@@ -1,7 +1,7 @@
 # Public clients
 
-Use this reference when changing the HTTP API, Go client, TypeScript client,
-streaming behavior, or gateway integration.
+Use this reference when integrating the Go or TypeScript client, forwarding
+gateway traffic, streaming exports, or consuming SSE.
 
 ## Go
 
@@ -83,13 +83,10 @@ SSE returns an async iterable and explicit `close`.
 The default `rsql` proxy reads `RSQL_URL` and `RSQL_API_TOKEN` on first property
 access, not at import time, so the package remains browser-loadable.
 
-## Contract synchronization
+## Choose a client
 
-For every HTTP change, compare:
-
-- `client/types.go`
-- `client/admin.go`, `client/database.go`, `client/table.go`, `client/events.go`
-- `client/src/types.ts`
-- `client/src/modules/*.ts`
-- `client/integration_test.go`
-- `client/tests/e2e.test.ts`
+- Use Go for trusted gateways, orchestrators, and high-throughput services.
+- Use TypeScript in trusted Bun or Node applications.
+- In a browser, use an explicit TypeScript client against an authenticated
+  gateway and never expose `RSQL_API_TOKEN`.
+- Use direct HTTP when another language or a thin integration is sufficient.

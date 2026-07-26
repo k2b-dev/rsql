@@ -1,12 +1,7 @@
 # HTTP API
 
-Use this reference when changing routes, payloads, response types, status codes,
-client contracts, or user-facing API documentation.
-
-The canonical route implementation is `internal/httpapi/handler.go`. Domain
-wire types live in `internal/domain`, query request types in
-`internal/store/sqlite/query.go`, and response behavior is covered by
-`internal/httpapi/handler_api_test.go`.
+Use this reference when calling routes directly, implementing a gateway, or
+checking payloads, response types, status codes, headers, and event contracts.
 
 ## Common contracts
 

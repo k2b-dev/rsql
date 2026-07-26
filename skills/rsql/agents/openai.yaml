@@ -1,4 +1,4 @@
 interface:
   display_name: "rsql"
-  short_description: "Build and operate rsql safely"
-  default_prompt: "Use $rsql to implement or review this rsql change against the current API and architecture."
+  short_description: "Integrate and operate rsql safely"
+  default_prompt: "Use $rsql to design this rsql integration against the public API, client, and hosting boundaries."
