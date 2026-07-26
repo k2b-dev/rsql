@@ -8,7 +8,7 @@ The Go client separates namespace administration from operations inside an
 already resolved database.
 
 ```go
-import rsql "github.com/ValentinKolb/rsql/client"
+import rsql "github.com/k2b-dev/rsql/client"
 
 client, err := rsql.New(rsql.Config{
     BaseURL: "http://rsql:8080",
@@ -100,14 +100,13 @@ return stream.Err()
 ### Install
 
 ```bash
-cd client
-bun install
+bun add @k2b/rsql-client
 ```
 
 ### Usage
 
 ```ts
-import { rsql, createRsqlClient } from "./src";
+import { createRsqlClient, rsql } from "@k2b/rsql-client";
 
 const explicit = createRsqlClient({
   url: "http://127.0.0.1:8080",

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ValentinKolb/rsql/internal/domain"
+	"github.com/k2b-dev/rsql/internal/domain"
 )
 
 var identRe = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]*$`)

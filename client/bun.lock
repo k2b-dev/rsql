@@ -2,7 +2,7 @@
   "lockfileVersion": 1,
   "workspaces": {
     "": {
-      "name": "@valentinkolb/rsql-client",
+      "name": "@k2b/rsql-client",
       "devDependencies": {
         "@types/bun": "latest",
       },

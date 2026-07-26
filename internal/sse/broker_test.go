@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ValentinKolb/rsql/internal/domain"
+	"github.com/k2b-dev/rsql/internal/domain"
 )
 
 func TestBrokerSubscribePublishUnsubscribeAndEncode(t *testing.T) {

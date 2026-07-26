@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ValentinKolb/rsql/internal/httpapi"
-	"github.com/ValentinKolb/rsql/internal/observability"
-	"github.com/ValentinKolb/rsql/internal/service"
+	"github.com/k2b-dev/rsql/internal/httpapi"
+	"github.com/k2b-dev/rsql/internal/observability"
+	"github.com/k2b-dev/rsql/internal/service"
 )
 
 func TestGoClientFullAPI(t *testing.T) {

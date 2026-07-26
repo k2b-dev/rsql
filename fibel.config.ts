@@ -31,10 +31,10 @@ export default defineFibel({
     { label: "Hosting", value: "/hosting/multi-tenant" },
   ],
   footerLinks: [
-    { label: "GitHub", value: "https://github.com/ValentinKolb/rsql" },
+    { label: "GitHub", value: "https://github.com/k2b-dev/rsql" },
     {
       label: "Security",
-      value: "https://github.com/ValentinKolb/rsql/security/policy",
+      value: "https://github.com/k2b-dev/rsql/security/policy",
     },
   ],
   plugins: [

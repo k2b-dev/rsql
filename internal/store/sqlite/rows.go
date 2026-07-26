@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ValentinKolb/rsql/internal/domain"
+	"github.com/k2b-dev/rsql/internal/domain"
 )
 
 // likeWildcardReplacer translates the user-friendly `*` wildcard in

@@ -13,10 +13,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/ValentinKolb/rsql/internal/config"
-	"github.com/ValentinKolb/rsql/internal/httpapi"
-	"github.com/ValentinKolb/rsql/internal/observability"
-	"github.com/ValentinKolb/rsql/internal/service"
+	"github.com/k2b-dev/rsql/internal/config"
+	"github.com/k2b-dev/rsql/internal/httpapi"
+	"github.com/k2b-dev/rsql/internal/observability"
+	"github.com/k2b-dev/rsql/internal/service"
 )
 
 // RunServe starts the rsql HTTP server and blocks until shutdown.

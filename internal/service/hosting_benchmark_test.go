@@ -6,8 +6,8 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/ValentinKolb/rsql/internal/domain"
-	"github.com/ValentinKolb/rsql/internal/store/control"
+	"github.com/k2b-dev/rsql/internal/domain"
+	"github.com/k2b-dev/rsql/internal/store/control"
 )
 
 func BenchmarkFleetListing(b *testing.B) {

@@ -16,12 +16,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ValentinKolb/rsql/internal/auth"
-	"github.com/ValentinKolb/rsql/internal/domain"
-	"github.com/ValentinKolb/rsql/internal/observability"
-	"github.com/ValentinKolb/rsql/internal/service"
-	"github.com/ValentinKolb/rsql/internal/store/sqlite"
-	"github.com/ValentinKolb/rsql/internal/telemetry"
+	"github.com/k2b-dev/rsql/internal/auth"
+	"github.com/k2b-dev/rsql/internal/domain"
+	"github.com/k2b-dev/rsql/internal/observability"
+	"github.com/k2b-dev/rsql/internal/service"
+	"github.com/k2b-dev/rsql/internal/store/sqlite"
+	"github.com/k2b-dev/rsql/internal/telemetry"
 )
 
 // Dependencies provides required collaborators for HTTP handler creation.

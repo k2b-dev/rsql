@@ -44,7 +44,7 @@ For HA / horizontal scaling, run separate data directories per process and shard
 
 ## Reporting a vulnerability
 
-Please open a [GitHub Security Advisory](https://github.com/ValentinKolb/rsql/security/advisories/new) for any suspected vulnerability. Do not open a public issue. A response is typically provided within seven days.
+Please open a [GitHub Security Advisory](https://github.com/k2b-dev/rsql/security/advisories/new) for any suspected vulnerability. Do not open a public issue. A response is typically provided within seven days.
 
 Please include:
 

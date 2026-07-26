@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/ValentinKolb/rsql/internal/app"
-	"github.com/ValentinKolb/rsql/internal/config"
+	"github.com/k2b-dev/rsql/internal/app"
+	"github.com/k2b-dev/rsql/internal/config"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )

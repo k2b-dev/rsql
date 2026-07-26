@@ -19,8 +19,8 @@ cmd/rsql
      -> internal/telemetry
 
 client/
-  -> public Go package github.com/ValentinKolb/rsql/client
-  -> Bun/browser TypeScript package @valentinkolb/rsql-client
+  -> public Go package github.com/k2b-dev/rsql/client
+  -> Bun/browser TypeScript package @k2b/rsql-client
 ```
 
 ## Package ownership

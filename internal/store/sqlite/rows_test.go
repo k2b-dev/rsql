@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/ValentinKolb/rsql/internal/domain"
+	"github.com/k2b-dev/rsql/internal/domain"
 )
 
 func setupRowsTable(t *testing.T) *sql.DB {

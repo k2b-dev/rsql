@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ValentinKolb/rsql/internal/config"
+	"github.com/k2b-dev/rsql/internal/config"
 )
 
 func TestRunServeValidationError(t *testing.T) {

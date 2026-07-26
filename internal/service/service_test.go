@@ -12,10 +12,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ValentinKolb/rsql/internal/domain"
-	"github.com/ValentinKolb/rsql/internal/store/control"
-	"github.com/ValentinKolb/rsql/internal/store/sqlite"
-	"github.com/ValentinKolb/rsql/internal/telemetry"
+	"github.com/k2b-dev/rsql/internal/domain"
+	"github.com/k2b-dev/rsql/internal/store/control"
+	"github.com/k2b-dev/rsql/internal/store/sqlite"
+	"github.com/k2b-dev/rsql/internal/telemetry"
 )
 
 func newTestService(t *testing.T) *Service {

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ValentinKolb/rsql/internal/config"
+	"github.com/k2b-dev/rsql/internal/config"
 )
 
 func TestVersionCommand(t *testing.T) {

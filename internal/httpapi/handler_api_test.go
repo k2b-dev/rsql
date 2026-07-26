@@ -16,8 +16,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ValentinKolb/rsql/internal/observability"
-	"github.com/ValentinKolb/rsql/internal/service"
+	"github.com/k2b-dev/rsql/internal/observability"
+	"github.com/k2b-dev/rsql/internal/service"
 )
 
 func newAPIForTest(t *testing.T) (http.Handler, *service.Service) {

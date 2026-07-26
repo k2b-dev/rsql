@@ -1,4 +1,4 @@
-module github.com/ValentinKolb/rsql
+module github.com/k2b-dev/rsql
 
 go 1.23
 

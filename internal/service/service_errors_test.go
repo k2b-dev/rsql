@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ValentinKolb/rsql/internal/domain"
-	"github.com/ValentinKolb/rsql/internal/store/sqlite"
+	"github.com/k2b-dev/rsql/internal/domain"
+	"github.com/k2b-dev/rsql/internal/store/sqlite"
 )
 
 func TestServiceNamespaceErrorPaths(t *testing.T) {

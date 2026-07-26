@@ -3,7 +3,7 @@ package sqlite
 import (
 	"encoding/json"
 
-	"github.com/ValentinKolb/rsql/internal/domain"
+	"github.com/k2b-dev/rsql/internal/domain"
 )
 
 // TableSchema stores table/view metadata for validation and API contracts.

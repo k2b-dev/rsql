@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ValentinKolb/rsql/internal/domain"
+	"github.com/k2b-dev/rsql/internal/domain"
 )
 
 // setupCSVTable creates a fresh table covering every type the encoder has

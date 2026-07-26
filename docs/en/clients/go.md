@@ -10,7 +10,7 @@ updated: 2026-07-26
 
 # Go Client
 
-The `github.com/ValentinKolb/rsql/client` package separates administrative
+The `github.com/k2b-dev/rsql/client` package separates administrative
 namespace management from operations bound to one database. The client is safe
 for concurrent use and accepts a custom `http.Client`.
 
@@ -20,7 +20,7 @@ for concurrent use and accepts a custom `http.Client`.
 import (
     "os"
 
-    rsql "github.com/ValentinKolb/rsql/client"
+    rsql "github.com/k2b-dev/rsql/client"
 )
 
 client, err := rsql.New(rsql.Config{

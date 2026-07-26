@@ -43,5 +43,5 @@ exports contain complete namespace contents.
 ## Reporting vulnerabilities
 
 Do not publish security vulnerabilities as public issues. Follow the repository
-[security policy](https://github.com/ValentinKolb/rsql/security/policy) to
+[security policy](https://github.com/k2b-dev/rsql/security/policy) to
 report them privately.

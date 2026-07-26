@@ -15,12 +15,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ValentinKolb/rsql/internal/domain"
-	"github.com/ValentinKolb/rsql/internal/namespace"
-	"github.com/ValentinKolb/rsql/internal/sse"
-	"github.com/ValentinKolb/rsql/internal/store/control"
-	"github.com/ValentinKolb/rsql/internal/store/sqlite"
-	"github.com/ValentinKolb/rsql/internal/telemetry"
+	"github.com/k2b-dev/rsql/internal/domain"
+	"github.com/k2b-dev/rsql/internal/namespace"
+	"github.com/k2b-dev/rsql/internal/sse"
+	"github.com/k2b-dev/rsql/internal/store/control"
+	"github.com/k2b-dev/rsql/internal/store/sqlite"
+	"github.com/k2b-dev/rsql/internal/telemetry"
 )
 
 var namespaceNameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$`)

@@ -6,9 +6,9 @@ import (
 	"sort"
 	"time"
 
-	"github.com/ValentinKolb/rsql/internal/domain"
-	"github.com/ValentinKolb/rsql/internal/store/sqlite"
-	"github.com/ValentinKolb/rsql/internal/telemetry"
+	"github.com/k2b-dev/rsql/internal/domain"
+	"github.com/k2b-dev/rsql/internal/store/sqlite"
+	"github.com/k2b-dev/rsql/internal/telemetry"
 )
 
 var overviewWindows = map[string]time.Duration{

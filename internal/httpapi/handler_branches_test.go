@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ValentinKolb/rsql/internal/domain"
-	"github.com/ValentinKolb/rsql/internal/observability"
+	"github.com/k2b-dev/rsql/internal/domain"
+	"github.com/k2b-dev/rsql/internal/observability"
 )
 
 func TestAPIMissingNamespaceErrorPaths(t *testing.T) {

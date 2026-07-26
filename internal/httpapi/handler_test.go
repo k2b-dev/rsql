@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ValentinKolb/rsql/internal/observability"
-	"github.com/ValentinKolb/rsql/internal/service"
+	"github.com/k2b-dev/rsql/internal/observability"
+	"github.com/k2b-dev/rsql/internal/service"
 )
 
 // TestHealthzPublic verifies that /healthz is reachable without auth, as

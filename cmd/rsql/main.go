@@ -3,7 +3,7 @@ package main
 import (
 	"os"
 
-	"github.com/ValentinKolb/rsql/internal/cli"
+	"github.com/k2b-dev/rsql/internal/cli"
 )
 
 var executeRoot = func() error {
