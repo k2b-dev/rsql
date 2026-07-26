@@ -155,3 +155,21 @@ func TestCollectorPersistsAcrossRestart(t *testing.T) {
 		t.Fatalf("unexpected persisted telemetry: %#v", buckets)
 	}
 }
+
+func BenchmarkCollectorRecord(b *testing.B) {
+	now := time.Now().UTC()
+	collector := newCollector(nil, time.Hour, func() time.Time { return now })
+	event := Event{
+		Namespace:     "tenant",
+		Operation:     "rows.list",
+		Status:        200,
+		Duration:      time.Millisecond,
+		ResponseBytes: 256,
+	}
+	b.ReportAllocs()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			collector.Record(event)
+		}
+	})
+}

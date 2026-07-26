@@ -2,11 +2,13 @@ package service
 
 import (
 	"bytes"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -78,7 +80,7 @@ func TestNamespaceLifecycle(t *testing.T) {
 
 func TestListNamespacesDoesNotOpenTenantDatabases(t *testing.T) {
 	svc := newTestService(t)
-	for i := range 250 {
+	for i := range 500 {
 		name := fmt.Sprintf("tenant_%03d", i)
 		if err := svc.registry.Create(name, control.PathFor(svc.dataDir, name)); err != nil {
 			t.Fatalf("create registry record %s: %v", name, err)
@@ -89,11 +91,48 @@ func TestListNamespacesDoesNotOpenTenantDatabases(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list namespaces: %v", err)
 	}
-	if len(namespaces) != 250 {
-		t.Fatalf("namespace count = %d, want 250", len(namespaces))
+	if len(namespaces) != 500 {
+		t.Fatalf("namespace count = %d, want 500", len(namespaces))
 	}
 	if got := svc.ns.OpenCount(); got != 0 {
 		t.Fatalf("list opened %d tenant databases", got)
+	}
+}
+
+func TestHundredActiveNamespaces(t *testing.T) {
+	svc := newTestService(t)
+	names := make([]string, 100)
+	for i := range names {
+		names[i] = fmt.Sprintf("active_%03d", i)
+		if _, err := svc.CreateNamespace(domain.NamespaceDefinition{Name: names[i], Config: defaultNamespaceConfig()}); err != nil {
+			t.Fatalf("create %s: %v", names[i], err)
+		}
+		if err := svc.ns.CloseHandle(names[i]); err != nil {
+			t.Fatalf("close %s: %v", names[i], err)
+		}
+	}
+
+	var wg sync.WaitGroup
+	errs := make(chan error, len(names))
+	for _, name := range names {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs <- svc.WithNamespaceRead(name, func(db *sql.DB) error {
+				var value int
+				return db.QueryRow(`SELECT 1`).Scan(&value)
+			})
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("active namespace read: %v", err)
+		}
+	}
+	if got := svc.ns.OpenCount(); got != 100 {
+		t.Fatalf("open handles = %d, want 100", got)
 	}
 }
 
