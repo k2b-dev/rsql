@@ -42,6 +42,7 @@ Create body:
   "name": "tenant_01",
   "config": {
     "journal_mode": "wal",
+    "synchronous": "full",
     "busy_timeout": 5000,
     "max_db_size": 1073741824,
     "query_timeout": 10000,

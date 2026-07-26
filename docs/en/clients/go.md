@@ -55,6 +55,27 @@ namespace, err := client.Admin().Namespaces.Create(ctx, rsql.NamespaceDefinition
 `Admin().Namespaces` provides `Create`, `List`, `Get`, `Update`, `Delete`,
 `Duplicate`, `Export`, `ImportDatabase`, and `ImportCSV`.
 
+`List` returns one page:
+
+```go
+page, err := client.Admin().Namespaces.List(ctx, rsql.NamespaceListOptions{
+    Limit: 100,
+})
+if err != nil {
+    return err
+}
+
+if page.NextCursor != "" {
+    page, err = client.Admin().Namespaces.List(ctx, rsql.NamespaceListOptions{
+        Limit:  100,
+        Cursor: page.NextCursor,
+    })
+}
+```
+
+`ListAll` consumes every page and returns one slice. Use it only when the
+complete fleet must be held in memory.
+
 ## Bind database operations
 
 ```go

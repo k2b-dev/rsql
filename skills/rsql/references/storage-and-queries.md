@@ -9,14 +9,16 @@ Each namespace owns one SQLite database file. rsql creates private tables and
 metadata that user APIs cannot address. SQLite object names beginning with `_`
 are reserved.
 
-The namespace manager opens:
+The namespace manager initializes resources independently:
 
-- a query-only read pool with up to four connections and one idle connection
-- one writer connection
+- a query-only pool on the first read, bounded by
+  `namespace-read-connections`
+- one writer connection on the first write
 - a per-namespace writer mutex
 
 Reads may run concurrently with a write under WAL. Writes inside one namespace
-are serialized. Separate namespaces have separate locks and pools.
+are serialized. Read-only namespaces do not retain writer connections. Separate
+namespaces have separate locks and pools.
 
 ## Schema
 

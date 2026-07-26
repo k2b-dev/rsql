@@ -86,6 +86,22 @@ Lazy resolution keeps module import browser-safe. Browser applications should
 usually construct an explicit client with application-provided configuration;
 do not ship the server-wide administrative token to a browser.
 
+Namespace listings are paginated:
+
+```ts
+const result = await client.namespaces.list({ limit: 100 });
+
+if (result.ok && result.data.next_cursor) {
+  await client.namespaces.list({
+    limit: 100,
+    cursor: result.data.next_cursor,
+  });
+}
+```
+
+`listAll()` consumes every page explicitly and returns one array. Use it only
+when the caller needs the complete fleet in memory.
+
 ## Streaming
 
 Database and CSV exports return the native `Response`, so callers choose how to

@@ -37,6 +37,7 @@ and namespace resolution remain application responsibilities.
   "name": "tenant_01",
   "config": {
     "journal_mode": "wal",
+    "synchronous": "full",
     "busy_timeout": 5000,
     "query_timeout": 10000,
     "foreign_keys": true,

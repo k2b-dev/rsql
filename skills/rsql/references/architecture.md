@@ -78,14 +78,15 @@ split with `Admin()` and `Database(namespace)`.
 ## Namespace lifecycle
 
 - `control.db` stores active namespace name, database path, and creation time.
-- Namespace database files live below `data/namespaces/`.
-- Handles open lazily on first operation.
-- Each handle owns one serialized writer connection and a read pool.
+- Namespace names map to stable SHA-256 paths with two directory levels below
+  `data/namespaces/`.
+- Handles open lazily on first operation; read and writer pools initialize
+  independently.
 - Idle or excess handles are closed without removing the namespace registry
   record or database file.
-- Startup reconciliation purges temporary exports, removes registry rows whose
-  files disappeared, reapplies internal schema/config to existing files, and
-  reports unregistered files without deleting them.
+- Startup does not enumerate namespace registry rows or tenant files.
+- Data-plane requests derive the path without querying `control.db`; lifecycle
+  operations continue to use registry metadata.
 
 ## Shutdown
 

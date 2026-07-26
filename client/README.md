@@ -61,12 +61,16 @@ The `rsql` export reads `RSQL_URL` and `RSQL_API_TOKEN` lazily on first access:
 ```ts
 import { rsql } from "@k2b/rsql";
 
-await rsql.namespaces.list();
+const page = await rsql.namespaces.list({ limit: 100 });
 ```
 
 Imports remain browser-safe because environment variables are not read during
 module evaluation. Browser applications should use an explicit client and must
 not expose a server-wide administrative token.
+
+Namespace lists use cursor pagination. Pass `page.data.next_cursor` to the next
+`list` call, or call `listAll()` explicitly when the complete fleet must be
+loaded into memory.
 
 ## Development
 

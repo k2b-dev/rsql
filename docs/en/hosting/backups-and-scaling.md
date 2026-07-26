@@ -62,6 +62,27 @@ requests through the orchestrator's placement record. Moving a namespace means
 exporting it, importing it into the destination instance, switching routing,
 and removing the old copy after verification.
 
+One process can register substantially more namespaces than it keeps open.
+`max-open-namespaces` bounds the warm working set; tenant database pools open
+on demand and are evicted when the limit or idle timeout is reached. Keep this
+limit sized for the instance's memory and file-descriptor budget rather than
+setting it to the total fleet size.
+
+Read and write pools initialize independently. A namespace that only receives
+reads does not open or retain its writer connection. Namespace files use
+deterministic two-level hash directories below `data/namespaces`, avoiding one
+directory with an entry for every provisioned database.
+
+The default `namespace-read-connections=1` is tuned for traffic spread across
+many namespaces. Increase it only when a small number of namespaces need
+parallel reads. More per-namespace connections improve hot-database throughput
+but consume more file descriptors and duplicate connection-local SQLite work.
+
+Namespace listing uses cursor pagination. Startup neither lists the registry
+nor scans namespace files, so cold fleet size does not determine startup work.
+If thousands of namespaces must remain hot simultaneously, split them across
+processes and route by placement.
+
 rsql does not provide replication, consensus, distributed transactions, or
 automatic failover. Build those properties at the deployment layer or use
 durable block storage and a single active process with an external recovery

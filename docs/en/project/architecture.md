@@ -48,15 +48,19 @@ validation, transactions, and storage details.
 ## Files on disk
 
 The configured data directory contains the control registry, telemetry store,
-namespace databases, and temporary export files. Namespace files are never
-automatically deleted merely because they are absent from the registry; startup
-reconciliation reports such files for operator review.
+namespace databases, and temporary export files. Namespace names map to stable
+SHA-256 paths with two directory-sharding levels below `data/namespaces`.
+
+Startup opens the control and telemetry stores but does not enumerate registry
+rows or tenant files. Data-plane requests derive the namespace path directly;
+control-plane operations use the registry for lifecycle metadata.
 
 ## Concurrency
 
-Each namespace has one serialized writer and a small read pool. Independent
-namespaces can execute concurrently. This matches SQLite's single-writer model
-while avoiding a server-wide database lock.
+Each namespace lazily opens one serialized writer and a small read pool. A
+read-only namespace does not retain a writer connection. Independent namespaces
+can execute concurrently. This matches SQLite's single-writer model while
+avoiding a server-wide database lock.
 
 ## API safety
 

@@ -66,13 +66,16 @@ The explicit client shape is:
 
 ```ts
 const client = createRsqlClient({ url, token, fetch });
-await client.namespaces.list();
+const page = await client.namespaces.list({ limit: 100 });
 await client.ns("tenant_01").table<Contact>("contacts").rows.list();
 ```
 
 `client.namespaces` is the control plane. `client.ns(name)` returns immutable,
 hierarchical modules for tables, rows, indexes, schema, query, changelog,
 overview, and events.
+
+`client.namespaces.list()` returns `{ data, next_cursor }`. Pass the cursor to
+the next call, or use `listAll()` explicitly when the entire fleet is needed.
 
 Methods return `RsqlResult<T>` instead of throwing for non-2xx HTTP responses.
 Network failures still reject.

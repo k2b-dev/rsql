@@ -26,7 +26,7 @@ updated: 2026-07-26
 ## List
 
 ```http
-GET /v1/demo/tables/contacts/rows?status=eq.active&order=name.asc&limit=20
+GET /v1/demo/tables/contacts/rows?status=eq.active&order=name.asc&limit=20&count=exact
 ```
 
 ```json
@@ -41,8 +41,11 @@ GET /v1/demo/tables/contacts/rows?status=eq.active&order=name.asc&limit=20
 }
 ```
 
-The default limit is 100 and the maximum is 10000. Aggregate selections return
-`{"data":[...]}` without pagination metadata. See
+The default limit is 100 and the maximum is 10000. Counts are omitted by
+default so listing a page does not scan the complete table and filtered result.
+Add `count=exact` when the UI needs `total_count` and `filter_count`.
+
+Aggregate selections return `{"data":[...]}` without pagination metadata. See
 [Filtering and pagination](/en/reference/filtering).
 
 ## Insert
