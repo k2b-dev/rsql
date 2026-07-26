@@ -13,6 +13,8 @@ Each namespace is one isolated SQLite database file, exposed over a REST API for
 - Read-only SQL endpoint (`SELECT` / `WITH`, single or batch)
 - SSE change stream per namespace
 - Import as `.db` or CSV; export as `.db` (namespace) or CSV (per table, with full filter passthrough)
+- Enforced per-namespace storage quotas with safe database imports
+- Per-namespace health, storage, traffic, latency, contention, and growth overview
 - Bearer-token auth, Prometheus metrics, optional pprof
 
 ## Run
@@ -52,6 +54,7 @@ const db = createRsqlClient({
 });
 
 await db.namespaces.list();
+await db.ns("demo").overview.get({ window: "24h" });
 ```
 
 ## Documentation
@@ -59,6 +62,7 @@ await db.namespaces.list();
 - [Quickstart](./docs/quickstart.md)
 - [API Overview](./docs/api-overview.md)
 - [Development Guide](./docs/development.md)
+- [Multi-Tenant Hosting](./docs/hosting.md)
 - [Client](./client/README.md)
 - [Performance Framework](./client/perf/README.md)
 - [Security](./SECURITY.md)

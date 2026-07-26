@@ -3,6 +3,7 @@
 - [Quickstart](quickstart.md) — setup, start, and first API calls.
 - [API Overview](api-overview.md) — endpoint map, request conventions, filtering, query semantics.
 - [Development Guide](development.md) — project layout, local workflow, testing, performance runs.
+- [Multi-Tenant Hosting](hosting.md) — isolation boundary, quotas, overview telemetry, and scaling model.
 
 Related:
 

@@ -120,7 +120,74 @@ Both shapes accept an optional `_meta` field that is forwarded to SSE and (for s
 - `POST /v1/:ns/query` (read-only SQL)
 - `GET /v1/:ns/subscribe` (SSE, optional `?tables=t1,t2`)
 - `GET /v1/:ns/changelog?table=<name>&limit=50&offset=0` — schema mutations only
-- `GET /v1/:ns/stats`
+- `GET /v1/:ns/overview?window=1h|24h|7d|30d` (default `24h`)
+
+### Namespace overview
+
+The overview endpoint is the tenant-facing operational read model. It combines
+live constant-time SQLite storage/schema values with bounded historical
+telemetry:
+
+- health and read/write mode
+- logical usage, allocated pages, reclaimable pages, quota, WAL, and disk bytes
+- request/read/write/error totals and time series
+- read/write latency (`p50`, `p95`, `p99`, average)
+- writer wait, busy errors, timeouts, and quota rejections
+- table/view/index/FTS counts and active SSE subscribers
+- top stable API operations
+- storage growth and projected quota exhaustion when enough samples exist
+
+```http
+GET /v1/demo/overview?window=24h
+```
+
+```json
+{
+  "health": {
+    "status": "healthy",
+    "mode": "read_write",
+    "issues": []
+  },
+  "storage": {
+    "used_bytes": 49152,
+    "allocated_bytes": 65536,
+    "reclaimable_bytes": 16384,
+    "quota_bytes": 1073741824,
+    "remaining_bytes": 1073676288,
+    "usage_ratio": 0.000061,
+    "database_file_bytes": 65536,
+    "wal_bytes": 0,
+    "shm_bytes": 0,
+    "disk_bytes": 65536
+  }
+}
+```
+
+`remaining_bytes` and `usage_ratio` use allocated pages because that is the
+enforced limit; `used_bytes` subtracts reusable free-list pages.
+`quota_bytes: 0`, `remaining_bytes: null`, and `usage_ratio: null` mean that no
+storage quota is configured. The endpoint does not count table rows or scan
+tenant data.
+
+### Storage quota errors
+
+Set `config.max_db_size` in bytes when creating or updating a namespace. rsql
+enforces the limit at SQLite page-allocation time on the serialized writer.
+Writes and imports that exceed it return:
+
+```http
+HTTP/1.1 507 Insufficient Storage
+```
+
+```json
+{
+  "error": "quota_exceeded",
+  "message": "namespace storage quota exceeded"
+}
+```
+
+The quota applies to allocated database pages. WAL and SHM sidecars are shown in
+the overview but are not part of the hard SQLite page quota.
 
 ## Filtering and Pagination
 
@@ -217,4 +284,3 @@ Rules:
 
 - Only read-only statements (`SELECT`/`WITH`) are allowed
 - Internal objects (prefixed with `_`) are blocked
-
