@@ -41,9 +41,27 @@ Configuration is read from CLI flags, then `RSQL_*` environment variables, then 
 go run ./cmd/rsql config print --format=json --api-token=dev-token
 ```
 
-## TypeScript Client
+## Clients
 
-The repo includes a Bun/TypeScript client in [`client/`](./client). It is not published to npm; use it as a workspace dependency or copy `client/src/` into your project.
+The repo includes a Go client and a Bun/TypeScript client in [`client/`](./client).
+
+The Go client separates administrative namespace management from namespace-bound database operations:
+
+```go
+import rsql "github.com/ValentinKolb/rsql/client"
+
+client, err := rsql.New(rsql.Config{
+	BaseURL: "http://127.0.0.1:8080",
+	Token:   "dev-token",
+})
+if err != nil {
+	return err
+}
+
+db, err := client.Database("demo")
+```
+
+The TypeScript client is not published to npm; use it as a workspace dependency or copy `client/src/` into your project.
 
 ```ts
 import { createRsqlClient } from "./client/src";
