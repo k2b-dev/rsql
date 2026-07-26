@@ -372,9 +372,12 @@ func tableIndexes(db *sql.DB, table string) ([]IndexSchema, error) {
 	if err != nil {
 		return nil, fmt.Errorf("index_list: %w", err)
 	}
-	defer rows.Close()
 
-	var out []IndexSchema
+	type indexEntry struct {
+		name   string
+		unique bool
+	}
+	var entries []indexEntry
 	for rows.Next() {
 		var seq int
 		var name string
@@ -384,23 +387,32 @@ func tableIndexes(db *sql.DB, table string) ([]IndexSchema, error) {
 		if err := rows.Scan(&seq, &name, &unique, &origin, &partial); err != nil {
 			return nil, fmt.Errorf("scan index_list: %w", err)
 		}
-		cols, err := indexColumns(db, name)
+		_ = origin
+		_ = partial
+		entries = append(entries, indexEntry{name: name, unique: unique == 1})
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, fmt.Errorf("iterate index_list: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, fmt.Errorf("close index_list: %w", err)
+	}
+
+	out := make([]IndexSchema, 0, len(entries))
+	for _, entry := range entries {
+		cols, err := indexColumns(db, entry.name)
 		if err != nil {
 			return nil, err
 		}
 		typ := "index"
-		if unique == 1 {
+		if entry.unique {
 			typ = "unique"
 		}
-		if strings.HasPrefix(name, "_fts_") {
+		if strings.HasPrefix(entry.name, "_fts_") {
 			typ = "fts"
 		}
-		_ = origin
-		_ = partial
-		out = append(out, IndexSchema{Name: name, Type: typ, Columns: cols})
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate index_list: %w", err)
+		out = append(out, IndexSchema{Name: entry.name, Type: typ, Columns: cols})
 	}
 
 	// Include synthetic FTS entries even if not returned by index_list.

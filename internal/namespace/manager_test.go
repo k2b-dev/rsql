@@ -223,3 +223,62 @@ func TestEvictionDuringConcurrentReadIsSafe(t *testing.T) {
 		t.Fatalf("got %d failed reads under concurrent eviction (out of %d ops)", failures.Load(), ops.Load())
 	}
 }
+
+func TestManagerBoundsRetainedHandles(t *testing.T) {
+	m := NewManager(Config{MaxRetained: 2})
+	defer m.Close()
+
+	dir := t.TempDir()
+	for _, name := range []string{"one", "two", "three"} {
+		path := filepath.Join(dir, name+".db")
+		if err := m.WithWrite(name, path, func(db *sql.DB) error {
+			_, err := db.Exec(`CREATE TABLE t (id INTEGER PRIMARY KEY)`)
+			return err
+		}); err != nil {
+			t.Fatalf("open %s: %v", name, err)
+		}
+	}
+	if got := m.OpenCount(); got > 2 {
+		t.Fatalf("retained %d handles, want at most 2", got)
+	}
+}
+
+func TestReadCanRunDuringWrite(t *testing.T) {
+	m := NewManager(Config{})
+	defer m.Close()
+
+	path := filepath.Join(t.TempDir(), "parallel.db")
+	if err := m.WithWrite("parallel", path, func(db *sql.DB) error {
+		_, err := db.Exec(`CREATE TABLE t (id INTEGER PRIMARY KEY)`)
+		return err
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		done <- m.WithWrite("parallel", path, func(*sql.DB) error {
+			close(started)
+			<-release
+			return nil
+		})
+	}()
+	<-started
+
+	begin := time.Now()
+	if err := m.WithRead("parallel", path, func(db *sql.DB) error {
+		var count int
+		return db.QueryRow(`SELECT COUNT(*) FROM t`).Scan(&count)
+	}); err != nil {
+		t.Fatalf("read during write: %v", err)
+	}
+	if took := time.Since(begin); took > 100*time.Millisecond {
+		t.Fatalf("read blocked behind writer for %v", took)
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatalf("writer: %v", err)
+	}
+}

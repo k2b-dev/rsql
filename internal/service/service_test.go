@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -240,6 +241,49 @@ func TestSSEAndDupExportImport(t *testing.T) {
 	}
 	if rows.(domain.ListResponse[map[string]any]).Meta.TotalCount == 0 {
 		t.Fatal("expected copied data after import")
+	}
+}
+
+func TestOversizedImportPreservesNamespace(t *testing.T) {
+	svc := newTestService(t)
+	_, err := svc.CreateNamespace(domain.NamespaceDefinition{
+		Name: "limited",
+		Config: domain.NamespaceConfig{
+			JournalMode:  "wal",
+			BusyTimeout:  5000,
+			MaxDBSize:    64 << 10,
+			QueryTimeout: 10000,
+			ForeignKeys:  domain.BoolPtr(true),
+		},
+	})
+	if err != nil {
+		t.Fatalf("create namespace: %v", err)
+	}
+	if err := svc.CreateTableOrView("limited", domain.TableCreateRequest{
+		Type: "table",
+		Name: "items",
+		Columns: []domain.ColumnDefinition{
+			{Name: "name", Type: "text", NotNull: true},
+		},
+	}); err != nil {
+		t.Fatalf("create table: %v", err)
+	}
+	if _, err := svc.InsertRows("limited", "items", []map[string]any{{"name": "preserve"}}, "", nil); err != nil {
+		t.Fatalf("insert seed: %v", err)
+	}
+
+	err = svc.ImportNamespaceDB("limited", bytes.NewReader(make([]byte, (64<<10)+1)))
+	var domainErr *domain.Error
+	if !errors.As(err, &domainErr) || domainErr.Code != domain.ErrQuotaExceeded {
+		t.Fatalf("expected quota error, got %v", err)
+	}
+
+	row, err := svc.GetRow("limited", "items", int64(1))
+	if err != nil {
+		t.Fatalf("read preserved row: %v", err)
+	}
+	if row["name"] != "preserve" {
+		t.Fatalf("unexpected preserved row: %#v", row)
 	}
 }
 

@@ -52,14 +52,23 @@ func ApplyNamespaceConfig(db *sql.DB, cfg domain.NamespaceConfig) error {
 	if cfg.QueryTimeout > 0 {
 		// Stored for service-level timeouts, no pragma equivalent needed here.
 	}
+	var pageSize int64
+	if err := db.QueryRow("PRAGMA page_size").Scan(&pageSize); err != nil {
+		return fmt.Errorf("read page_size: %w", err)
+	}
+	maxPages := int64(0xfffffffe)
 	if cfg.MaxDBSize > 0 {
-		pageSize := int64(4096)
-		maxPages := cfg.MaxDBSize / pageSize
-		if maxPages > 0 {
-			if _, err := db.Exec(fmt.Sprintf("PRAGMA max_page_count = %d", maxPages)); err != nil {
-				return fmt.Errorf("apply max_db_size: %w", err)
-			}
+		maxPages = cfg.MaxDBSize / pageSize
+		if maxPages < 1 {
+			return fmt.Errorf("%w: max_db_size must be at least one SQLite page (%d bytes)", ErrQuotaTooSmall, pageSize)
 		}
+	}
+	var appliedMax int64
+	if err := db.QueryRow(fmt.Sprintf("PRAGMA max_page_count = %d", maxPages)).Scan(&appliedMax); err != nil {
+		return fmt.Errorf("apply max_db_size: %w", err)
+	}
+	if cfg.MaxDBSize > 0 && appliedMax > maxPages {
+		return fmt.Errorf("%w: current database requires %d bytes", ErrQuotaTooSmall, appliedMax*pageSize)
 	}
 	if _, err := db.Exec(fmt.Sprintf("PRAGMA foreign_keys = %d", boolInt(cfg.ForeignKeysOrDefault()))); err != nil {
 		return fmt.Errorf("apply foreign_keys: %w", err)

@@ -41,11 +41,40 @@ func New(dataDir string, idleTimeout time.Duration) (*Service, error) {
 	s := &Service{
 		dataDir:  dataDir,
 		registry: reg,
-		ns:       namespace.NewManager(namespace.Config{IdleTimeout: idleTimeout}),
-		broker:   sse.NewBroker(),
+		ns: namespace.NewManager(namespace.Config{
+			IdleTimeout: idleTimeout,
+			OnOpen:      configureNamespacePools,
+		}),
+		broker: sse.NewBroker(),
 	}
 	s.reconcile(slog.Default())
 	return s, nil
+}
+
+func defaultNamespaceConfig() domain.NamespaceConfig {
+	return domain.NamespaceConfig{
+		JournalMode:  "wal",
+		BusyTimeout:  5000,
+		QueryTimeout: 10000,
+		ForeignKeys:  domain.BoolPtr(true),
+	}
+}
+
+func configureNamespacePools(_ string, _ *sql.DB, writeDB *sql.DB) error {
+	if err := sqlite.EnsureInternalSchema(writeDB); err != nil {
+		return err
+	}
+	cfg := defaultNamespaceConfig()
+	ok, err := sqlite.GetMeta(writeDB, "namespace_config", "self", &cfg)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		if err := sqlite.PutMeta(writeDB, "namespace_config", "self", cfg); err != nil {
+			return err
+		}
+	}
+	return sqlite.ApplyNamespaceConfig(writeDB, cfg)
 }
 
 // reconcile resolves the two known crash-window inconsistencies between the
@@ -59,11 +88,11 @@ func New(dataDir string, idleTimeout time.Duration) (*Service, error) {
 //     left over after a clean boot is by definition stale.
 //  2. For every active registry row:
 //     - file missing → soft-delete the registry row (closes the
-//       "crash mid-DELETE" window where os.Remove succeeded but
-//       registry.Delete didn't).
+//     "crash mid-DELETE" window where os.Remove succeeded but
+//     registry.Delete didn't).
 //     - file exists → re-run EnsureInternalSchema and reapply the stored
-//       NamespaceConfig. Both are idempotent so a healthy namespace is
-//       a no-op; a partial-CREATE namespace is healed.
+//     NamespaceConfig. Both are idempotent so a healthy namespace is
+//     a no-op; a partial-CREATE namespace is healed.
 //  3. Surface any *.db file under data/namespaces that has no registry
 //     entry as an INFO log line. Do not delete — could be an intentional
 //     backup copy or a hand-restored database.
@@ -125,6 +154,7 @@ func (s *Service) reconcile(logger *slog.Logger) {
 			logger.Warn("reconcile: heal failed (namespace remains in registry)",
 				"namespace", rec.Name, "error", healErr)
 		}
+		_ = s.ns.CloseHandle(rec.Name)
 	}
 
 	// 3. Orphan-file scan.
@@ -219,11 +249,9 @@ func (s *Service) ListNamespaces() ([]map[string]any, error) {
 	}
 	out := make([]map[string]any, 0, len(recs))
 	for _, r := range recs {
-		cfg, _ := s.GetNamespaceConfig(r.Name)
 		out = append(out, map[string]any{
 			"name":       r.Name,
 			"created_at": r.CreatedAt,
-			"config":     cfg,
 		})
 	}
 	return out, nil
@@ -316,7 +344,7 @@ func (s *Service) DuplicateNamespace(source, target string) (map[string]any, err
 		return nil, domain.WrapError(domain.ErrConflict, 409, "target namespace already exists", err)
 	}
 
-	if err := s.ns.WithRead(source, src.DBPath, func(db *sql.DB) error {
+	if err := s.ns.WithWrite(source, src.DBPath, func(db *sql.DB) error {
 		_, err := db.Exec(`VACUUM INTO ?`, targetPath)
 		return err
 	}); err != nil {
@@ -342,7 +370,7 @@ func (s *Service) ExportNamespace(name string) (string, error) {
 	exportPath := filepath.Join(exportDir, fmt.Sprintf("%s-%d.db", name, time.Now().UTC().UnixNano()))
 	_ = os.Remove(exportPath)
 
-	err = s.ns.WithRead(name, rec.DBPath, func(db *sql.DB) error {
+	err = s.ns.WithWrite(name, rec.DBPath, func(db *sql.DB) error {
 		_, err := db.Exec(`VACUUM INTO ?`, exportPath)
 		return err
 	})
@@ -364,25 +392,91 @@ func (s *Service) ImportNamespaceDB(name string, src io.Reader) error {
 		}
 		return domain.WrapError(domain.ErrInternal, 500, "failed to read namespace", err)
 	}
+	cfg, err := s.GetNamespaceConfig(name)
+	if err != nil {
+		return err
+	}
 
 	tmp := rec.DBPath + ".import.tmp"
+	backup := rec.DBPath + ".import.backup"
+	_ = os.Remove(tmp)
+	_ = os.Remove(backup)
+	defer os.Remove(tmp)
+	defer os.Remove(backup)
+
 	f, err := os.Create(tmp)
 	if err != nil {
 		return domain.WrapError(domain.ErrInternal, 500, "failed to create import temp file", err)
 	}
-	if _, err := io.Copy(f, src); err != nil {
-		f.Close()
-		return domain.WrapError(domain.ErrInternal, 500, "failed to write import temp file", err)
+	reader := src
+	if cfg.MaxDBSize > 0 {
+		reader = io.LimitReader(src, cfg.MaxDBSize+1)
+	}
+	written, copyErr := io.Copy(f, reader)
+	if copyErr != nil {
+		_ = f.Close()
+		return domain.WrapError(domain.ErrInternal, 500, "failed to write import temp file", copyErr)
 	}
 	if err := f.Close(); err != nil {
 		return domain.WrapError(domain.ErrInternal, 500, "failed to close import temp file", err)
+	}
+	if cfg.MaxDBSize > 0 && written > cfg.MaxDBSize {
+		return domain.NewError(domain.ErrQuotaExceeded, 507, "import exceeds namespace storage quota")
+	}
+	if err := validateImportDatabase(tmp, cfg); err != nil {
+		return mapErr(err)
 	}
 
 	if err := s.ns.CloseHandle(name); err != nil {
 		return domain.WrapError(domain.ErrInternal, 500, "failed to close namespace handle", err)
 	}
+	if err := os.Rename(rec.DBPath, backup); err != nil {
+		return domain.WrapError(domain.ErrInternal, 500, "failed to preserve current namespace database", err)
+	}
 	if err := os.Rename(tmp, rec.DBPath); err != nil {
+		_ = os.Rename(backup, rec.DBPath)
 		return domain.WrapError(domain.ErrInternal, 500, "failed to replace namespace database", err)
+	}
+	if err := s.ns.WithWrite(name, rec.DBPath, func(*sql.DB) error { return nil }); err != nil {
+		_ = s.ns.CloseHandle(name)
+		_ = os.Remove(rec.DBPath)
+		_ = os.Rename(backup, rec.DBPath)
+		return domain.WrapError(domain.ErrInternal, 500, "failed to configure imported namespace database", err)
+	}
+	_ = os.Remove(backup)
+	return nil
+}
+
+func validateImportDatabase(path string, cfg domain.NamespaceConfig) error {
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		return fmt.Errorf("open imported database: %w", err)
+	}
+	db.SetMaxOpenConns(1)
+	defer db.Close()
+
+	if _, err := db.Exec("PRAGMA journal_mode = DELETE"); err != nil {
+		return fmt.Errorf("prepare imported database: %w", err)
+	}
+	if err := sqlite.EnsureInternalSchema(db); err != nil {
+		return err
+	}
+	if err := sqlite.PutMeta(db, "namespace_config", "self", cfg); err != nil {
+		return err
+	}
+	var check string
+	if err := db.QueryRow("PRAGMA quick_check").Scan(&check); err != nil {
+		return fmt.Errorf("check imported database: %w", err)
+	}
+	if check != "ok" {
+		return fmt.Errorf("invalid imported database: %s", check)
+	}
+	storage, err := sqlite.Storage(db, path, cfg.MaxDBSize)
+	if err != nil {
+		return err
+	}
+	if cfg.MaxDBSize > 0 && storage.AllocatedBytes > cfg.MaxDBSize {
+		return domain.NewError(domain.ErrQuotaExceeded, 507, "import exceeds namespace storage quota")
 	}
 	return nil
 }
@@ -455,9 +549,6 @@ func (s *Service) TablesList(ns string) ([]map[string]any, error) {
 	}
 	var out []map[string]any
 	err = s.ns.WithRead(ns, path, func(db *sql.DB) error {
-		if err := sqlite.EnsureInternalSchema(db); err != nil {
-			return err
-		}
 		rows, err := sqlite.ListTables(db)
 		if err != nil {
 			return err
@@ -490,17 +581,14 @@ func (s *Service) GetNamespaceConfig(name string) (domain.NamespaceConfig, error
 
 	var cfg domain.NamespaceConfig
 	err = s.ns.WithRead(name, path, func(db *sql.DB) error {
-		if err := sqlite.EnsureInternalSchema(db); err != nil {
-			return err
-		}
 		ok, err := sqlite.GetMeta(db, "namespace_config", "self", &cfg)
 		if err != nil {
 			return err
 		}
 		if !ok {
-			cfg = domain.NamespaceConfig{JournalMode: "wal", BusyTimeout: 5000, ForeignKeys: domain.BoolPtr(true), QueryTimeout: 10000}
+			cfg = defaultNamespaceConfig()
 		}
-		return sqlite.ApplyNamespaceConfig(db, cfg)
+		return nil
 	})
 	if err != nil {
 		return domain.NamespaceConfig{}, mapErr(err)
@@ -1043,6 +1131,12 @@ func mapErr(err error) error {
 	}
 	if errors.Is(err, sqlite.ErrValidation) {
 		return domain.NewError(domain.ErrValidationFailed, 400, err.Error())
+	}
+	if errors.Is(err, sqlite.ErrQuotaTooSmall) {
+		return domain.NewError(domain.ErrInvalidRequest, 400, err.Error())
+	}
+	if sqlite.IsFullError(err) {
+		return domain.NewError(domain.ErrQuotaExceeded, 507, "namespace storage quota exceeded")
 	}
 
 	// Remaining string-based mapping: identifier / structural validation

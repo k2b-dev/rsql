@@ -40,7 +40,6 @@ func TableOrViewExists(db *sql.DB, name string) bool {
 	return n == 1
 }
 
-
 // IsView reports whether object is a view.
 func IsView(db *sql.DB, name string) (bool, error) {
 	var typ string
@@ -1091,6 +1090,10 @@ func updateRows(db *sql.DB, table string, payload map[string]any, where string, 
 	if err := validateIdentifier(table); err != nil {
 		return nil, 0, nil, err
 	}
+	schema, err := TableSchemaForValidation(db, table)
+	if err != nil {
+		return nil, 0, nil, err
+	}
 	tx, err := db.Begin()
 	if err != nil {
 		return nil, 0, nil, err
@@ -1105,10 +1108,6 @@ func updateRows(db *sql.DB, table string, payload map[string]any, where string, 
 		return nil, 0, nil, nil
 	}
 
-	schema, err := TableSchemaForValidation(db, table)
-	if err != nil {
-		return nil, 0, nil, err
-	}
 	colMap := make(map[string]domain.ColumnDefinition, len(schema.Columns))
 	for _, c := range schema.Columns {
 		colMap[c.Name] = c
