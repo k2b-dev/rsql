@@ -9,5 +9,5 @@
     "noEmit": true,
     "types": ["bun"]
   },
-  "include": ["fibel.config.ts"]
+  "include": ["fibel.config.ts", "plugins/**/*.ts"]
 }

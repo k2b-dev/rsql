@@ -48,6 +48,10 @@ bun install
 bun run docs:dev
 ```
 
+Set `RSQL_DOCS_SITE_URL` to the public documentation origin in production so
+canonical links, Open Graph URLs, `robots.txt`, and the sitemap use absolute
+URLs.
+
 Start with the [quickstart](./docs/en/quickstart.md), then use the
 [HTTP API reference](./docs/en/reference/http-api.md),
 [Go client guide](./docs/en/clients/go.md), or
