@@ -1,0 +1,38 @@
+{
+  "skill_name": "rsql",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Add a tenant-facing endpoint to rsql that lists every namespace and its current storage usage. Implement it in the most direct place.",
+      "expected_output": "The agent rejects the unsafe tenant-wide framing, identifies the control-plane boundary, and proposes or implements a namespace-scoped alternative without exposing the administrative token.",
+      "files": [],
+      "expectations": [
+        "Distinguishes the namespace control plane from the tenant data plane",
+        "Does not expose cross-namespace fleet data to a tenant",
+        "Traces the change through handler, service, clients, tests, and docs"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Add a new filter operator called starts_with to the rsql rows API and make it available in both clients.",
+      "expected_output": "The agent locates the shared filter builder and updates the HTTP contract, Go and TypeScript clients or query inputs, tests, Fibel docs, and skill reference while preserving SQL parameterization.",
+      "files": [],
+      "expectations": [
+        "Keeps user values parameterized and identifiers validated",
+        "Covers row list, bulk mutations, and CSV export filter parity",
+        "Updates both clients, tests, and documentation"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "Investigate why one hot rsql tenant causes write latency for another tenant and recommend the smallest safe fix.",
+      "expected_output": "The agent uses the namespace manager and telemetry architecture to determine that writer locks are per namespace, checks shared resources before changing locking, and proposes evidence-driven tests or benchmarks.",
+      "files": [],
+      "expectations": [
+        "Recognizes that writer serialization is per namespace",
+        "Investigates shared process or storage bottlenecks instead of adding speculative locks",
+        "Uses overview telemetry and noisy-neighbor benchmarks as evidence"
+      ]
+    }
+  ]
+}
