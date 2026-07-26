@@ -8,7 +8,7 @@ gateway traffic, streaming exports, or consuming SSE.
 Import:
 
 ```go
-import rsql "github.com/k2b-dev/rsql/client"
+import rsql "github.com/k2b-dev/rsql"
 ```
 
 Construction is explicit:
@@ -59,7 +59,7 @@ namespace DB import/export because those are administrative routes.
 Import:
 
 ```ts
-import { createRsqlClient, rsql } from "@k2b/rsql-client";
+import { createRsqlClient, rsql } from "@k2b/rsql";
 ```
 
 The explicit client shape is:

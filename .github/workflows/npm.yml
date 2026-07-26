@@ -43,7 +43,7 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.value }}
         run: |
-          if npm view "@k2b/rsql-client@$VERSION" version >/dev/null 2>&1; then
+          if npm view "@k2b/rsql@$VERSION" version >/dev/null 2>&1; then
             echo "publish=false" >> "$GITHUB_OUTPUT"
           else
             echo "publish=true" >> "$GITHUB_OUTPUT"

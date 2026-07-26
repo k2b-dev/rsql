@@ -18,15 +18,18 @@ cmd/rsql
         -> internal/sse
      -> internal/telemetry
 
+github.com/k2b-dev/rsql
+  -> public Go client package
+
 client/
-  -> public Go package github.com/k2b-dev/rsql/client
-  -> Bun/browser TypeScript package @k2b/rsql-client
+  -> Bun/browser TypeScript package @k2b/rsql
 ```
 
 ## Package ownership
 
 | Package | Responsibility |
 | --- | --- |
+| `github.com/k2b-dev/rsql` | Public Go client |
 | `cmd/rsql` | Process entrypoint |
 | `internal/cli` | Cobra commands and flag binding |
 | `internal/config` | Viper environment loading, defaults, validation, redaction |

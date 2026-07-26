@@ -1,149 +1,81 @@
-# rsql Clients
+# @k2b/rsql
 
-Go and Bun/TypeScript clients for `rsql`.
+Type-safe, fetch-based client for the
+[rsql](https://github.com/k2b-dev/rsql) HTTP API. It runs in Bun, Node, and
+modern browsers without runtime dependencies.
 
-## Go
-
-The Go client separates namespace administration from operations inside an
-already resolved database.
-
-```go
-import rsql "github.com/k2b-dev/rsql/client"
-
-client, err := rsql.New(rsql.Config{
-    BaseURL: "http://rsql:8080",
-    Token:   os.Getenv("RSQL_API_TOKEN"),
-})
-if err != nil {
-    return err
-}
-defer client.CloseIdleConnections()
-```
-
-The orchestrator uses the explicit control plane:
-
-```go
-config := rsql.DefaultNamespaceConfig()
-config.MaxDBSize = 10 << 30
-
-namespace, err := client.Admin().Namespaces.Create(ctx, rsql.NamespaceDefinition{
-    Name:   "tenant-123",
-    Config: &config,
-})
-```
-
-Application services bind the resolved namespace once:
-
-```go
-db, err := client.Database("tenant-123")
-if err != nil {
-    return err
-}
-
-contacts, err := db.Table("contacts")
-if err != nil {
-    return err
-}
-
-rows, err := contacts.Rows.List(ctx, map[string][]string{
-    "status": {"eq.active"},
-    "order":  {"name.asc"},
-})
-```
-
-### Gateway forwarding
-
-`Database.Forward` can only construct namespace-scoped data-plane routes. It
-cannot access `/v1/namespaces`. Request and response bodies for allowed table,
-query, changelog, overview, and SSE routes are streamed without buffering.
-
-```go
-namespace, err := resolveNamespace(r.Context(), authenticatedUserID)
-if err != nil {
-    return err
-}
-
-db, err := client.Database(namespace)
-if err != nil {
-    return err
-}
-
-return db.Forward(w, r, rsql.DatabaseRoute{
-    Path: strings.TrimPrefix(r.URL.Path, "/database"),
-})
-```
-
-The forwarder replaces caller authorization with the internal rsql token,
-removes sensitive and hop-by-hop headers, preserves the raw query string, and
-does not retry requests.
-
-### Typed SSE
-
-```go
-stream, err := db.Events.Subscribe(ctx, rsql.SubscribeOptions{
-    Tables: []string{"contacts"},
-})
-if err != nil {
-    return err
-}
-defer stream.Close()
-
-for stream.Next() {
-    event := stream.Event()
-    log.Printf("%s %s", event.Table, event.Action)
-}
-return stream.Err()
-```
-
-## TypeScript
-
-### Install
+## Install
 
 ```bash
-bun add @k2b/rsql-client
+bun add @k2b/rsql
 ```
 
-### Usage
+## Usage
 
 ```ts
-import { createRsqlClient, rsql } from "@k2b/rsql-client";
+import { createRsqlClient } from "@k2b/rsql";
 
-const explicit = createRsqlClient({
+const client = createRsqlClient({
   url: "http://127.0.0.1:8080",
   token: "secret",
 });
 
-const ns = explicit.ns("crm");
-await ns.tables.list();
-const overview = await ns.overview.get({ window: "24h" });
-console.log(overview);
+const contacts = client.ns("crm").table<{
+  id: number;
+  name: string;
+  status: "active" | "inactive";
+}>("contacts");
 
-// Database exports stay streaming; choose how and where to consume the body.
-const exported = await explicit.namespaces.exportDb("crm");
-if (exported.ok) {
-  await exported.data.body?.pipeTo(destination);
+const result = await contacts.rows.list({
+  status: "eq.active",
+  order: "name.asc",
+});
+
+if (result.ok) {
+  console.log(result.data);
 }
+```
 
-// Lazy default client, reads env on first property access only
-// Required env: RSQL_URL, RSQL_API_TOKEN
+Modules are hierarchical and stateless:
+
+```text
+client.namespaces
+client.ns(name).tables
+client.ns(name).table(name).schema
+client.ns(name).table(name).indexes
+client.ns(name).table(name).rows
+client.ns(name).query
+client.ns(name).changelog
+client.ns(name).overview
+client.ns(name).events
+```
+
+HTTP errors resolve to `RsqlResult<T>`. Network and runtime failures may reject
+the promise. Export methods return the native streaming `Response`; SSE
+subscriptions expose an async iterable and explicit `close` function.
+
+## Default Client
+
+The `rsql` export reads `RSQL_URL` and `RSQL_API_TOKEN` lazily on first access:
+
+```ts
+import { rsql } from "@k2b/rsql";
+
 await rsql.namespaces.list();
 ```
 
-## Tests
+Imports remain browser-safe because environment variables are not read during
+module evaluation. Browser applications should use an explicit client and must
+not expose a server-wide administrative token.
+
+## Development
 
 ```bash
-cd client
+bun install
+bun run typecheck
 bun test
+bun run test:package
 ```
 
-## Performance Benchmarks
-
-```bash
-cd client
-bun run perf:fast
-bun run perf:deep
-bun run perf:report --run=<run-id-or-path>
-```
-
-Detailed benchmark docs and scenario list:
-`client/perf/README.md`
+Performance profiles are available through `bun run perf:fast` and
+`bun run perf:deep`.

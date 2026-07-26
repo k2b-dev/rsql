@@ -69,6 +69,16 @@ Start with the [quickstart](./docs/en/quickstart.md), then use the
 
 The server is pre-1.0. Breaking API changes may occur before v1.0.
 
+## Clients
+
+```bash
+go get github.com/k2b-dev/rsql@v0.4.0
+bun add @k2b/rsql
+```
+
+See the [Go client guide](./docs/en/clients/go.md) and
+[TypeScript client guide](./docs/en/clients/typescript.md).
+
 ## License
 
 MIT, see [LICENSE](./LICENSE).

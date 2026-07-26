@@ -10,17 +10,17 @@ updated: 2026-07-26
 
 # TypeScript Client
 
-`@k2b/rsql-client` is a fetch-based, browser-compatible client. Its modules are
+`@k2b/rsql` is a fetch-based, browser-compatible client. Its modules are
 stateless namespaces built from immutable URL and token configuration.
 
 ```bash
-bun add @k2b/rsql-client
+bun add @k2b/rsql
 ```
 
 ## Create an explicit client
 
 ```ts
-import { createRsqlClient } from "@k2b/rsql-client";
+import { createRsqlClient } from "@k2b/rsql";
 
 const client = createRsqlClient({
   url: "http://127.0.0.1:8080",
@@ -77,7 +77,7 @@ The exported `rsql` client reads `RSQL_URL` and `RSQL_API_TOKEN` only when it is
 first accessed:
 
 ```ts
-import { rsql } from "@k2b/rsql-client";
+import { rsql } from "@k2b/rsql";
 
 const result = await rsql.namespaces.list();
 ```

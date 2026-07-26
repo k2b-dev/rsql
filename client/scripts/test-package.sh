@@ -21,7 +21,7 @@ npm install "$package_root/$archive" \
   --silent
 
 cat > "$work_dir/smoke.ts" <<'EOF'
-import { createRsqlClient, rsql, type RsqlClient } from "@k2b/rsql-client";
+import { createRsqlClient, rsql, type RsqlClient } from "@k2b/rsql";
 
 const client: RsqlClient = createRsqlClient({
   url: "https://rsql.example",

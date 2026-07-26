@@ -10,12 +10,12 @@ updated: 2026-07-26
 
 # Go Client
 
-The `github.com/k2b-dev/rsql/client` package separates administrative
+The `github.com/k2b-dev/rsql` package separates administrative
 namespace management from operations bound to one database. The client is safe
 for concurrent use and accepts a custom `http.Client`.
 
 ```bash
-go get github.com/k2b-dev/rsql/client@v0.4.0
+go get github.com/k2b-dev/rsql@v0.4.0
 ```
 
 ## Create a client
@@ -24,7 +24,7 @@ go get github.com/k2b-dev/rsql/client@v0.4.0
 import (
     "os"
 
-    rsql "github.com/k2b-dev/rsql/client"
+    rsql "github.com/k2b-dev/rsql"
 )
 
 client, err := rsql.New(rsql.Config{
