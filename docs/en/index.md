@@ -55,7 +55,7 @@ image: /assets/rsql-social.png
         <div class="rsql-proof-item"><strong class="rsql-proof-value">666/s</strong><span class="rsql-proof-label">mixed writes</span></div>
         <div class="rsql-proof-item"><strong class="rsql-proof-value">0 / 559k</strong><span class="rsql-proof-label">errors / measured ops</span></div>
       </div>
-      <p class="rsql-proof-note">Apple Silicon laptop · 10 namespaces · 12 real-world scenarios · machine-specific, not a capacity SLA</p>
+      <p class="rsql-proof-note">10 namespaces · 12 real-world scenarios · machine-specific, not a capacity SLA</p>
     </div>
   </section>
 
