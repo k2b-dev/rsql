@@ -123,7 +123,7 @@ func TestAPIMainFlow(t *testing.T) {
 
 	mustStatus(t, doReq(t, h, http.MethodPost, "/v1/ws/query", map[string]any{"sql": "SELECT COUNT(*) AS c FROM kunden", "params": []any{}}, nil), http.StatusOK)
 	mustStatus(t, doReq(t, h, http.MethodGet, "/v1/ws/changelog?limit=50&offset=0", nil, nil), http.StatusOK)
-	mustStatus(t, doReq(t, h, http.MethodGet, "/v1/ws/stats", nil, nil), http.StatusOK)
+	mustStatus(t, doReq(t, h, http.MethodGet, "/v1/ws/overview?window=24h", nil, nil), http.StatusOK)
 
 	mustStatus(t, doReq(t, h, http.MethodPost, "/v1/ws/tables", map[string]any{"type": "view", "name": "v_kunden", "sql": "SELECT firma FROM kunden"}, nil), http.StatusCreated)
 	mustStatus(t, doReq(t, h, http.MethodPut, "/v1/ws/tables/v_kunden", map[string]any{"sql": "SELECT firma FROM kunden"}, nil), http.StatusOK)

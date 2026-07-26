@@ -126,7 +126,7 @@ func normalizePathForMetrics(path string) string {
 
 	if len(parts) == 3 {
 		switch parts[2] {
-		case "query", "subscribe", "changelog", "stats", "tables":
+		case "query", "subscribe", "changelog", "overview", "tables":
 			return "/v1/{ns}/" + parts[2]
 		default:
 			return "/v1/{ns}/..."

@@ -16,6 +16,7 @@ const (
 	ErrValidationFailed  ErrorCode = "validation_failed"
 	ErrSQLNotReadOnly    ErrorCode = "sql_not_read_only"
 	ErrQuotaExceeded     ErrorCode = "quota_exceeded"
+	ErrDatabaseBusy      ErrorCode = "database_busy"
 	ErrInternal          ErrorCode = "internal_error"
 )
 

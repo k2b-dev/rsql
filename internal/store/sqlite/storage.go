@@ -62,8 +62,8 @@ func Storage(db *sql.DB, dbPath string, quotaBytes int64) (StorageInfo, error) {
 		DiskBytes:         databaseBytes + walBytes + shmBytes,
 	}
 	if quotaBytes > 0 {
-		remaining := max(quotaBytes-used, 0)
-		ratio := float64(used) / float64(quotaBytes)
+		remaining := max(quotaBytes-allocated, 0)
+		ratio := float64(allocated) / float64(quotaBytes)
 		info.RemainingBytes = &remaining
 		info.UsageRatio = &ratio
 	}

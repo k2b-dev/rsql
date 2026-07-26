@@ -4,13 +4,16 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/ValentinKolb/rsql/internal/domain"
+	"github.com/ValentinKolb/rsql/internal/store/control"
 	"github.com/ValentinKolb/rsql/internal/store/sqlite"
+	"github.com/ValentinKolb/rsql/internal/telemetry"
 )
 
 func newTestService(t *testing.T) *Service {
@@ -73,7 +76,78 @@ func TestNamespaceLifecycle(t *testing.T) {
 	}
 }
 
-func TestSchemaRowsQueryAndStats(t *testing.T) {
+func TestListNamespacesDoesNotOpenTenantDatabases(t *testing.T) {
+	svc := newTestService(t)
+	for i := range 250 {
+		name := fmt.Sprintf("tenant_%03d", i)
+		if err := svc.registry.Create(name, control.PathFor(svc.dataDir, name)); err != nil {
+			t.Fatalf("create registry record %s: %v", name, err)
+		}
+	}
+
+	namespaces, err := svc.ListNamespaces()
+	if err != nil {
+		t.Fatalf("list namespaces: %v", err)
+	}
+	if len(namespaces) != 250 {
+		t.Fatalf("namespace count = %d, want 250", len(namespaces))
+	}
+	if got := svc.ns.OpenCount(); got != 0 {
+		t.Fatalf("list opened %d tenant databases", got)
+	}
+}
+
+func TestOverviewTelemetryIsNamespaceIsolated(t *testing.T) {
+	svc := newTestService(t)
+	config := defaultNamespaceConfig()
+	for _, name := range []string{"tenant_a", "tenant_b"} {
+		if _, err := svc.CreateNamespace(domain.NamespaceDefinition{Name: name, Config: config}); err != nil {
+			t.Fatalf("create %s: %v", name, err)
+		}
+	}
+	svc.RecordRequest(telemetry.Event{Namespace: "tenant_a", Operation: "rows.list", Status: 200, Duration: time.Millisecond})
+	svc.RecordRequest(telemetry.Event{Namespace: "tenant_b", Operation: "rows.insert", Write: true, Status: 507, QuotaRejected: true, Duration: 2 * time.Millisecond})
+
+	a, err := svc.Overview("tenant_a", "1h")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := svc.Overview("tenant_b", "1h")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Activity.Reads != 1 || a.Activity.Writes != 0 || a.WriteContention.QuotaRejects != 0 {
+		t.Fatalf("unexpected tenant A activity: %#v", a.Activity)
+	}
+	if b.Activity.Reads != 0 || b.Activity.Writes != 1 || b.WriteContention.QuotaRejects != 1 {
+		t.Fatalf("unexpected tenant B activity: %#v", b.Activity)
+	}
+	if _, err := svc.Overview("tenant_a", "invalid"); err == nil {
+		t.Fatal("expected invalid overview window error")
+	}
+}
+
+func TestRejectedQuotaUpdateKeepsPreviousConfig(t *testing.T) {
+	svc := newTestService(t)
+	config := defaultNamespaceConfig()
+	if _, err := svc.CreateNamespace(domain.NamespaceDefinition{Name: "quota_update", Config: config}); err != nil {
+		t.Fatal(err)
+	}
+	tooSmall := config
+	tooSmall.MaxDBSize = 1
+	if _, err := svc.UpdateNamespaceConfig("quota_update", tooSmall); err == nil {
+		t.Fatal("expected quota update to fail")
+	}
+	stored, err := svc.GetNamespaceConfig("quota_update")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.MaxDBSize != config.MaxDBSize {
+		t.Fatalf("stored quota = %d, want %d", stored.MaxDBSize, config.MaxDBSize)
+	}
+}
+
+func TestSchemaRowsQueryAndOverview(t *testing.T) {
 	svc := newTestService(t)
 
 	_, err := svc.CreateNamespace(domain.NamespaceDefinition{Name: "work", Config: domain.NamespaceConfig{JournalMode: "wal", BusyTimeout: 5000, QueryTimeout: 10000, ForeignKeys: domain.BoolPtr(true)}})
@@ -163,12 +237,12 @@ func TestSchemaRowsQueryAndStats(t *testing.T) {
 		t.Fatalf("unexpected query result: %#v", queryMap)
 	}
 
-	stats, err := svc.Stats("work")
+	overview, err := svc.Overview("work", "24h")
 	if err != nil {
-		t.Fatalf("stats: %v", err)
+		t.Fatalf("overview: %v", err)
 	}
-	if stats["table_count"].(int) != 1 {
-		t.Fatalf("unexpected table_count in stats: %#v", stats)
+	if overview.Schema.Tables != 1 || overview.Storage.AllocatedBytes <= 0 {
+		t.Fatalf("unexpected overview: %#v", overview)
 	}
 
 	changelog, err := svc.Changelog("work", "kunden", 50, 0)

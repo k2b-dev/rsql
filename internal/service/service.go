@@ -20,16 +20,18 @@ import (
 	"github.com/ValentinKolb/rsql/internal/sse"
 	"github.com/ValentinKolb/rsql/internal/store/control"
 	"github.com/ValentinKolb/rsql/internal/store/sqlite"
+	"github.com/ValentinKolb/rsql/internal/telemetry"
 )
 
 var namespaceNameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$`)
 
 // Service orchestrates all rsql operations.
 type Service struct {
-	dataDir  string
-	registry *control.Registry
-	ns       *namespace.Manager
-	broker   *sse.Broker
+	dataDir   string
+	registry  *control.Registry
+	ns        *namespace.Manager
+	broker    *sse.Broker
+	telemetry *telemetry.Collector
 }
 
 // New creates a service instance.
@@ -38,15 +40,22 @@ func New(dataDir string, idleTimeout time.Duration) (*Service, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Service{
-		dataDir:  dataDir,
-		registry: reg,
-		ns: namespace.NewManager(namespace.Config{
-			IdleTimeout: idleTimeout,
-			OnOpen:      configureNamespacePools,
-		}),
-		broker: sse.NewBroker(),
+	collector, err := telemetry.Open(dataDir)
+	if err != nil {
+		_ = reg.Close()
+		return nil, err
 	}
+	s := &Service{
+		dataDir:   dataDir,
+		registry:  reg,
+		telemetry: collector,
+		broker:    sse.NewBroker(),
+	}
+	s.ns = namespace.NewManager(namespace.Config{
+		IdleTimeout: idleTimeout,
+		OnOpen:      configureNamespacePools,
+		OnWriteWait: collector.RecordWriteWait,
+	})
 	s.reconcile(slog.Default())
 	return s, nil
 }
@@ -191,6 +200,9 @@ func (s *Service) Close() error {
 	if s.ns != nil {
 		errs = append(errs, s.ns.Close())
 	}
+	if s.telemetry != nil {
+		errs = append(errs, s.telemetry.Close())
+	}
 	if s.registry != nil {
 		errs = append(errs, s.registry.Close())
 	}
@@ -237,6 +249,7 @@ func (s *Service) CreateNamespace(req domain.NamespaceDefinition) (map[string]an
 		_ = s.registry.Delete(req.Name)
 		return nil, domain.WrapError(domain.ErrInternal, 500, "failed to initialize namespace", err)
 	}
+	_ = s.telemetry.Purge(req.Name)
 
 	return map[string]any{"name": req.Name, "config": req.Config}, nil
 }
@@ -247,12 +260,25 @@ func (s *Service) ListNamespaces() ([]map[string]any, error) {
 	if err != nil {
 		return nil, domain.WrapError(domain.ErrInternal, 500, "failed to list namespaces", err)
 	}
+	latest, err := s.telemetry.Latest()
+	if err != nil {
+		return nil, domain.WrapError(domain.ErrInternal, 500, "failed to read namespace activity", err)
+	}
 	out := make([]map[string]any, 0, len(recs))
 	for _, r := range recs {
-		out = append(out, map[string]any{
+		item := map[string]any{
 			"name":       r.Name,
 			"created_at": r.CreatedAt,
-		})
+		}
+		if bucket, ok := latest[r.Name]; ok {
+			if bucket.LastActivityAt > 0 {
+				item["last_activity_at"] = time.Unix(bucket.LastActivityAt, 0).UTC().Format(time.RFC3339)
+			}
+			if bucket.Storage != nil {
+				item["storage"] = bucket.Storage
+			}
+		}
+		out = append(out, item)
 	}
 	return out, nil
 }
@@ -287,16 +313,17 @@ func (s *Service) UpdateNamespaceConfig(name string, cfg domain.NamespaceConfig)
 		if err := sqlite.EnsureInternalSchema(db); err != nil {
 			return err
 		}
-		if err := sqlite.PutMeta(db, "namespace_config", "self", cfg); err != nil {
+		if err := sqlite.ApplyNamespaceConfig(db, cfg); err != nil {
 			return err
 		}
-		if err := sqlite.ApplyNamespaceConfig(db, cfg); err != nil {
+		if err := sqlite.PutMeta(db, "namespace_config", "self", cfg); err != nil {
 			return err
 		}
 		return nil
 	})
 	if err != nil {
-		return nil, domain.WrapError(domain.ErrInternal, 500, "failed to update namespace config", err)
+		_ = s.ns.CloseHandle(name)
+		return nil, mapErr(err)
 	}
 
 	return map[string]any{"name": name, "config": cfg}, nil
@@ -324,6 +351,7 @@ func (s *Service) DeleteNamespace(name string) error {
 		}
 		return domain.WrapError(domain.ErrInternal, 500, "failed to delete namespace", err)
 	}
+	_ = s.telemetry.Purge(name)
 	return nil
 }
 
@@ -351,6 +379,7 @@ func (s *Service) DuplicateNamespace(source, target string) (map[string]any, err
 		_ = s.registry.Delete(target)
 		return nil, domain.WrapError(domain.ErrInternal, 500, "failed to duplicate namespace", err)
 	}
+	_ = s.telemetry.Purge(target)
 	return map[string]any{"source": source, "target": target}, nil
 }
 
@@ -1005,33 +1034,6 @@ func (s *Service) Changelog(ns, table string, limit, offset int) ([]sqlite.Chang
 	return out, nil
 }
 
-// Stats returns namespace statistics.
-func (s *Service) Stats(ns string) (map[string]any, error) {
-	path, err := s.pathForNamespace(ns)
-	if err != nil {
-		return nil, err
-	}
-	cfg, err := s.GetNamespaceConfig(ns)
-	if err != nil {
-		return nil, err
-	}
-	cfgMap := map[string]any{"journal_mode": cfg.JournalMode, "busy_timeout": cfg.BusyTimeout, "max_db_size": cfg.MaxDBSize, "query_timeout": cfg.QueryTimeout, "foreign_keys": cfg.ForeignKeysOrDefault(), "read_only": cfg.ReadOnly}
-
-	var out map[string]any
-	err = s.ns.WithRead(ns, path, func(db *sql.DB) error {
-		stats, err := sqlite.Stats(db, path, cfgMap)
-		if err != nil {
-			return err
-		}
-		out = stats
-		return nil
-	})
-	if err != nil {
-		return nil, mapErr(err)
-	}
-	return out, nil
-}
-
 // Subscribe registers SSE subscriptions.
 func (s *Service) Subscribe(ns string, tables []string) (uint64, <-chan domain.SSEEvent, error) {
 	if _, err := s.pathForNamespace(ns); err != nil {
@@ -1137,6 +1139,9 @@ func mapErr(err error) error {
 	}
 	if sqlite.IsFullError(err) {
 		return domain.NewError(domain.ErrQuotaExceeded, 507, "namespace storage quota exceeded")
+	}
+	if sqlite.IsBusyError(err) {
+		return domain.NewError(domain.ErrDatabaseBusy, 503, "namespace database is busy")
 	}
 
 	// Remaining string-based mapping: identifier / structural validation

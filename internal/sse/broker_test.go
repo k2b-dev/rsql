@@ -10,6 +10,9 @@ import (
 func TestBrokerSubscribePublishUnsubscribeAndEncode(t *testing.T) {
 	b := NewBroker()
 	id, ch := b.Subscribe("ns", []string{"kunden"})
+	if got := b.Count("ns"); got != 1 {
+		t.Fatalf("subscriber count = %d, want 1", got)
+	}
 
 	b.Publish("ns", domain.SSEEvent{Table: "orders", Action: "update"})
 	select {
@@ -35,4 +38,7 @@ func TestBrokerSubscribePublishUnsubscribeAndEncode(t *testing.T) {
 
 	b.Unsubscribe("ns", id)
 	b.Unsubscribe("ns", id)
+	if got := b.Count("ns"); got != 0 {
+		t.Fatalf("subscriber count = %d, want 0", got)
+	}
 }

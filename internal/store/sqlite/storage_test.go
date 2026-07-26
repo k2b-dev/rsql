@@ -44,6 +44,9 @@ func TestStorageAndQuota(t *testing.T) {
 	if info.QuotaBytes != cfg.MaxDBSize || info.RemainingBytes == nil || info.UsageRatio == nil {
 		t.Fatalf("incomplete quota info: %#v", info)
 	}
+	if *info.RemainingBytes != cfg.MaxDBSize-info.AllocatedBytes {
+		t.Fatalf("remaining bytes = %d, want %d", *info.RemainingBytes, cfg.MaxDBSize-info.AllocatedBytes)
+	}
 }
 
 func TestQuotaBelowCurrentSizeIsRejected(t *testing.T) {

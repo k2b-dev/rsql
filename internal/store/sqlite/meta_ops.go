@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"os"
 )
 
 // ChangelogEntry is one schema changelog item.
@@ -57,60 +56,4 @@ func ListChangelog(db *sql.DB, tableFilter string, limit, offset int) ([]Changel
 		return nil, fmt.Errorf("iterate changelog: %w", err)
 	}
 	return out, nil
-}
-
-// Stats builds namespace statistics.
-func Stats(db *sql.DB, dbPath string, cfg map[string]any) (map[string]any, error) {
-	fileInfo, err := os.Stat(dbPath)
-	if err != nil {
-		return nil, fmt.Errorf("stat db file: %w", err)
-	}
-
-	rows, err := db.Query(`SELECT name, type, sql FROM sqlite_master WHERE type IN ('table','view') AND name NOT GLOB '_*' AND name != 'sqlite_sequence'`)
-	if err != nil {
-		return nil, fmt.Errorf("list objects for stats: %w", err)
-	}
-	defer rows.Close()
-
-	tables := map[string]any{}
-	tableCount := 0
-	viewCount := 0
-	totalRows := 0
-
-	for rows.Next() {
-		var name, typ, sqlText string
-		if err := rows.Scan(&name, &typ, &sqlText); err != nil {
-			return nil, fmt.Errorf("scan object for stats: %w", err)
-		}
-
-		obj := map[string]any{"type": typ}
-		colCount, err := columnCount(db, name)
-		if err != nil {
-			return nil, err
-		}
-		obj["column_count"] = colCount
-
-		if typ == "table" {
-			tableCount++
-			count, err := countRows(db, name)
-			if err != nil {
-				return nil, err
-			}
-			obj["row_count"] = count
-			totalRows += count
-		} else {
-			viewCount++
-			obj["source_tables"] = extractSourceTables(sqlText)
-		}
-		tables[name] = obj
-	}
-
-	return map[string]any{
-		"file_size":   fileInfo.Size(),
-		"table_count": tableCount,
-		"view_count":  viewCount,
-		"total_rows":  totalRows,
-		"config":      cfg,
-		"tables":      tables,
-	}, nil
 }

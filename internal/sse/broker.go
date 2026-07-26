@@ -66,6 +66,13 @@ func (b *Broker) Unsubscribe(namespace string, id uint64) {
 	}
 }
 
+// Count returns the active subscriber count for a namespace.
+func (b *Broker) Count(namespace string) int {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	return len(b.clients[namespace])
+}
+
 // Publish sends an event to matching subscribers.
 func (b *Broker) Publish(namespace string, event domain.SSEEvent) {
 	b.mu.RLock()

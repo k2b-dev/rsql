@@ -29,3 +29,13 @@ func IsFullError(err error) bool {
 	var sqliteErr *sqlitedriver.Error
 	return errors.As(err, &sqliteErr) && sqliteErr.Code()&0xff == sqlite3.SQLITE_FULL
 }
+
+// IsBusyError reports SQLite busy and locked errors.
+func IsBusyError(err error) bool {
+	var sqliteErr *sqlitedriver.Error
+	if !errors.As(err, &sqliteErr) {
+		return false
+	}
+	code := sqliteErr.Code() & 0xff
+	return code == sqlite3.SQLITE_BUSY || code == sqlite3.SQLITE_LOCKED
+}

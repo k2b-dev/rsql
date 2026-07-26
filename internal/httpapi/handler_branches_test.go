@@ -42,7 +42,7 @@ func TestAPIMissingNamespaceErrorPaths(t *testing.T) {
 		{http.MethodDelete, "/v1/missing/tables/t/rows?v=eq.x", nil, http.StatusNotFound},
 		{http.MethodPost, "/v1/missing/query", map[string]any{"sql": "SELECT 1", "params": []any{}}, http.StatusNotFound},
 		{http.MethodGet, "/v1/missing/changelog", nil, http.StatusNotFound},
-		{http.MethodGet, "/v1/missing/stats", nil, http.StatusNotFound},
+		{http.MethodGet, "/v1/missing/overview", nil, http.StatusNotFound},
 		{http.MethodGet, "/v1/missing/subscribe", nil, http.StatusNotFound},
 	}
 

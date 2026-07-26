@@ -21,6 +21,7 @@ import (
 	"github.com/ValentinKolb/rsql/internal/observability"
 	"github.com/ValentinKolb/rsql/internal/service"
 	"github.com/ValentinKolb/rsql/internal/store/sqlite"
+	"github.com/ValentinKolb/rsql/internal/telemetry"
 )
 
 // Dependencies provides required collaborators for HTTP handler creation.
@@ -58,7 +59,8 @@ func NewHandler(dep Dependencies) http.Handler {
 	mux.Handle("GET /metrics", dep.Metrics.Handler())
 
 	// API surface — bearer token required.
-	mux.Handle("/v1/", auth.Middleware(dep.Token, http.HandlerFunc(h.handleV1)))
+	api := namespaceTelemetryMiddleware(dep.Service, http.HandlerFunc(h.handleV1))
+	mux.Handle("/v1/", auth.Middleware(dep.Token, api))
 
 	chain := http.Handler(mux)
 	chain = dep.Metrics.Middleware(chain)
@@ -169,12 +171,12 @@ func (h *apiHandler) handleNamespaceScoped(w http.ResponseWriter, r *http.Reques
 			}
 			h.changelog(w, r, ns)
 			return
-		case "stats":
+		case "overview":
 			if r.Method != http.MethodGet {
 				methodNotAllowed(w)
 				return
 			}
-			h.stats(w, r, ns)
+			h.overview(w, r, ns)
 			return
 		case "tables":
 			switch r.Method {
@@ -722,13 +724,130 @@ func (h *apiHandler) changelog(w http.ResponseWriter, r *http.Request, ns string
 	writeJSON(w, http.StatusOK, result)
 }
 
-func (h *apiHandler) stats(w http.ResponseWriter, _ *http.Request, ns string) {
-	result, err := h.service.Stats(ns)
+func (h *apiHandler) overview(w http.ResponseWriter, r *http.Request, ns string) {
+	window := r.URL.Query().Get("window")
+	if window == "" {
+		window = "24h"
+	}
+	result, err := h.service.Overview(ns, window)
 	if err != nil {
 		writeServiceError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+func namespaceTelemetryMiddleware(service *service.Service, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		namespace, operation, ok := classifyNamespaceRequest(r)
+		if !ok {
+			next.ServeHTTP(w, r)
+			return
+		}
+		start := time.Now()
+		recorder := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(recorder, r)
+		service.RecordRequest(telemetry.Event{
+			Namespace:     namespace,
+			Operation:     operation,
+			Write:         r.Method != http.MethodGet && r.Method != http.MethodHead,
+			Status:        recorder.status,
+			Duration:      time.Since(start),
+			ResponseBytes: recorder.bytes,
+			QuotaRejected: recorder.status == http.StatusInsufficientStorage,
+			Busy:          recorder.status == http.StatusServiceUnavailable,
+			Timeout:       recorder.status == http.StatusRequestTimeout || recorder.status == http.StatusGatewayTimeout,
+			Streaming:     operation == "events.subscribe",
+		})
+	})
+}
+
+func classifyNamespaceRequest(r *http.Request) (string, string, bool) {
+	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	if len(parts) < 3 || parts[0] != "v1" {
+		return "", "", false
+	}
+	if parts[1] == "namespaces" {
+		if len(parts) < 3 {
+			return "", "", false
+		}
+		operation := "namespaces.get"
+		if len(parts) >= 4 {
+			operation = "namespaces." + parts[3]
+		} else {
+			switch r.Method {
+			case http.MethodPut:
+				operation = "namespaces.update"
+			case http.MethodDelete:
+				operation = "namespaces.delete"
+			}
+		}
+		return parts[2], operation, true
+	}
+
+	namespace := parts[1]
+	resource := parts[2]
+	switch resource {
+	case "query":
+		return namespace, "query.run", true
+	case "subscribe":
+		return namespace, "events.subscribe", true
+	case "changelog":
+		return namespace, "changelog.list", true
+	case "overview":
+		return namespace, "overview.get", true
+	case "tables":
+		if len(parts) == 3 {
+			if r.Method == http.MethodPost {
+				return namespace, "tables.create", true
+			}
+			return namespace, "tables.list", true
+		}
+		if len(parts) == 4 {
+			return namespace, methodOperation("tables", r.Method), true
+		}
+		if len(parts) >= 5 && parts[4] == "indexes" {
+			return namespace, methodOperation("indexes", r.Method), true
+		}
+		if len(parts) >= 5 && parts[4] == "rows" {
+			if len(parts) >= 6 {
+				return namespace, methodOperation("row", r.Method), true
+			}
+			if r.Method == http.MethodPatch {
+				return namespace, "rows.bulk_update", true
+			}
+			if r.Method == http.MethodDelete {
+				return namespace, "rows.bulk_delete", true
+			}
+			return namespace, methodOperation("rows", r.Method), true
+		}
+	}
+	return namespace, "other", true
+}
+
+func methodOperation(resource, method string) string {
+	action := "get"
+	switch method {
+	case http.MethodPost:
+		action = "insert"
+		if resource != "rows" {
+			action = "create"
+		}
+	case http.MethodPut, http.MethodPatch:
+		action = "update"
+	case http.MethodDelete:
+		action = "delete"
+	}
+	if (resource == "rows" || resource == "row") && method == http.MethodGet {
+		action = "list"
+		if resource == "row" {
+			action = "get"
+		}
+	}
+	if resource == "row" {
+		resource = "rows"
+	}
+	return resource + "." + action
 }
 
 func requestIDMiddleware(next http.Handler) http.Handler {
@@ -863,12 +982,27 @@ func parseInt(v string, def int) int {
 
 type statusRecorder struct {
 	http.ResponseWriter
-	status int
+	status      int
+	bytes       int64
+	wroteHeader bool
 }
 
 func (r *statusRecorder) WriteHeader(status int) {
+	if r.wroteHeader {
+		return
+	}
+	r.wroteHeader = true
 	r.status = status
 	r.ResponseWriter.WriteHeader(status)
+}
+
+func (r *statusRecorder) Write(payload []byte) (int, error) {
+	if !r.wroteHeader {
+		r.WriteHeader(http.StatusOK)
+	}
+	written, err := r.ResponseWriter.Write(payload)
+	r.bytes += int64(written)
+	return written, err
 }
 
 func (r *statusRecorder) Flush() {
