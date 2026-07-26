@@ -18,6 +18,8 @@ coverage.out
 node_modules/
 client/node_modules/
 .bun/
+.fibel/
+dist/
 
 # Performance artifacts
 client/perf/runs/
@@ -27,3 +29,6 @@ data/
 
 # Local dex task store
 .dex/
+
+# Local skill evaluation artifacts
+skills/*-workspace/

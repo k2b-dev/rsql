@@ -54,8 +54,8 @@ rows, err := contacts.Rows.List(ctx, map[string][]string{
 ### Gateway forwarding
 
 `Database.Forward` can only construct namespace-scoped data-plane routes. It
-cannot access `/v1/namespaces`. Request and response bodies are streamed without
-buffering, including multipart imports, CSV/DB exports, and SSE.
+cannot access `/v1/namespaces`. Request and response bodies for allowed table,
+query, changelog, overview, and SSE routes are streamed without buffering.
 
 ```go
 namespace, err := resolveNamespace(r.Context(), authenticatedUserID)
