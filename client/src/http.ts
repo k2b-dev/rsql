@@ -1,4 +1,4 @@
-import type { ApiErrorBody, CreateRsqlClientOptions, QueryInput, QueryValue, RsqlResult } from "./types";
+import type { ApiErrorBody, CreateRsqlClientOptions, QueryInput, QueryValue, RsqlResult } from "./types.js";
 
 export interface HttpClient {
   json<T>(path: string, init?: RequestInit): Promise<RsqlResult<T>>;

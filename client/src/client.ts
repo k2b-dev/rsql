@@ -1,7 +1,7 @@
-import { createHttpClient } from "./http";
-import { createNamespaceModule } from "./modules/namespace";
-import { createNamespacesModule } from "./modules/namespaces";
-import type { CreateRsqlClientOptions, RsqlClient } from "./types";
+import { createHttpClient } from "./http.js";
+import { createNamespaceModule } from "./modules/namespace.js";
+import { createNamespacesModule } from "./modules/namespaces.js";
+import type { CreateRsqlClientOptions, RsqlClient } from "./types.js";
 
 export const createRsqlClient = (options: CreateRsqlClientOptions): RsqlClient => {
   const http = createHttpClient(options);

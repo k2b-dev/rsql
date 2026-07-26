@@ -1,5 +1,5 @@
-import type { HttpClient } from "../http";
-import type { ImportFile, NamespacesModule, NamespaceConfig, NamespaceDefinition } from "../types";
+import type { HttpClient } from "../http.js";
+import type { ImportFile, NamespacesModule, NamespaceConfig, NamespaceDefinition } from "../types.js";
 
 const version = "v1";
 const jsonHeaders: HeadersInit = {

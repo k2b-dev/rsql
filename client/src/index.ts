@@ -1,5 +1,5 @@
-export { createRsqlClient } from "./client";
-export { rsql } from "./default";
+export { createRsqlClient } from "./client.js";
+export { rsql } from "./default.js";
 
 export type {
   ApiErrorBody,
@@ -35,4 +35,4 @@ export type {
   TableModule,
   TablesModule,
   TableUpdateRequest,
-} from "./types";
+} from "./types.js";

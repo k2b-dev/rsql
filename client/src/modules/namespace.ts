@@ -1,4 +1,4 @@
-import type { HttpClient } from "../http";
+import type { HttpClient } from "../http.js";
 import type {
   NamespaceModule,
   OverviewWindowName,
@@ -7,9 +7,9 @@ import type {
   SSESubscribeOptions,
   TableCreateRequest,
   TableUpdateRequest,
-} from "../types";
-import { createTableModule } from "./table";
-import { createSSESubscription } from "./sse";
+} from "../types.js";
+import { createTableModule } from "./table.js";
+import { createSSESubscription } from "./sse.js";
 
 const version = "v1";
 const jsonHeaders: HeadersInit = {

@@ -1,4 +1,4 @@
-import type { HttpClient } from "../http";
+import type { HttpClient } from "../http.js";
 import type {
   IndexCreateRequest,
   MutateOptions,
@@ -8,7 +8,7 @@ import type {
   TableExportOptions,
   TableModule,
   TableUpdateRequest,
-} from "../types";
+} from "../types.js";
 
 interface Context {
   http: HttpClient;

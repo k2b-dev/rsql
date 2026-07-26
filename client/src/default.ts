@@ -1,5 +1,5 @@
-import { createRsqlClient } from "./client";
-import type { RsqlClient } from "./types";
+import { createRsqlClient } from "./client.js";
+import type { RsqlClient } from "./types.js";
 
 let defaultClient: RsqlClient | null = null;
 

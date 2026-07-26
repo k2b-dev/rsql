@@ -1,4 +1,4 @@
-import type { SSEEvent, SSESubscription } from "../types";
+import type { SSEEvent, SSESubscription } from "../types.js";
 
 export const createSSESubscription = (
   response: Response,
