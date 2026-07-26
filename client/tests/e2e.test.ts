@@ -124,8 +124,10 @@ describe("rsql client e2e", () => {
       const changelog = await expectOk(workspace.changelog.list({ limit: 50, offset: 0 }));
       expect(changelog.length).toBeGreaterThan(0);
 
-      const stats = await expectOk(workspace.stats.get());
-      expect(typeof stats.table_count).toBe("number");
+      const overview = await expectOk(workspace.overview.get({ window: "24h" }));
+      expect(overview.schema.tables).toBeGreaterThanOrEqual(1);
+      expect(overview.storage.allocated_bytes).toBeGreaterThan(0);
+      expect(overview.activity.requests).toBeGreaterThan(0);
 
       await expectOk(view.schema.delete({ cleanup: true }));
       await expectOk(customers.indexes.delete("idx_customers_name"));

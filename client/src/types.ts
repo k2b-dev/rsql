@@ -152,6 +152,92 @@ export interface NamespaceRecord {
   created_at?: string;
   db_path?: string;
   config?: NamespaceConfig;
+  last_activity_at?: string;
+  storage?: StorageSnapshot;
+}
+
+export type OverviewWindowName = "1h" | "24h" | "7d" | "30d";
+
+export interface StorageSnapshot {
+  used_bytes: number;
+  allocated_bytes: number;
+  wal_bytes: number;
+  disk_bytes: number;
+}
+
+export interface OverviewLatency {
+  count: number;
+  average_ms: number;
+  p50_ms: number;
+  p95_ms: number;
+  p99_ms: number;
+}
+
+export interface NamespaceOverview {
+  generated_at: string;
+  window: {
+    name: OverviewWindowName;
+    from: string;
+    to: string;
+    resolution: "5m" | "1h";
+  };
+  health: {
+    status: "healthy" | "degraded";
+    mode: "read_write" | "read_only";
+    issues: string[];
+  };
+  storage: StorageSnapshot & {
+    reclaimable_bytes: number;
+    quota_bytes: number;
+    remaining_bytes: number | null;
+    usage_ratio: number | null;
+    database_file_bytes: number;
+    shm_bytes: number;
+  };
+  activity: {
+    requests: number;
+    reads: number;
+    writes: number;
+    errors: number;
+    error_rate: number;
+    response_bytes: number;
+    last_activity_at: string | null;
+    series: Array<{
+      timestamp: string;
+      reads: number;
+      writes: number;
+      errors: number;
+    }>;
+  };
+  read_latency: OverviewLatency;
+  write_latency: OverviewLatency;
+  write_contention: {
+    wait: OverviewLatency;
+    busy_errors: number;
+    timeouts: number;
+    quota_rejections: number;
+  };
+  schema: {
+    tables: number;
+    views: number;
+    indexes: number;
+    fts_indexes: number;
+  };
+  realtime: {
+    subscribers: number;
+  };
+  top_operations: Array<{
+    name: string;
+    count: number;
+    errors: number;
+    error_rate: number;
+    latency: OverviewLatency;
+  }>;
+  growth?: {
+    bytes_per_day: number;
+    sample_count: number;
+    projected_full_at: string | null;
+  };
 }
 
 export interface NamespacesModule {
@@ -229,8 +315,8 @@ export interface NamespaceModule {
   changelog: {
     list(options?: { table?: string; limit?: number; offset?: number }): Promise<RsqlResult<ChangelogEntry[]>>;
   };
-  stats: {
-    get(): Promise<RsqlResult<Record<string, unknown>>>;
+  overview: {
+    get(options?: { window?: OverviewWindowName }): Promise<RsqlResult<NamespaceOverview>>;
   };
   events: {
     subscribe(options?: SSESubscribeOptions): Promise<RsqlResult<SSESubscription>>;

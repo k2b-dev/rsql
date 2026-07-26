@@ -21,6 +21,8 @@ const explicit = createRsqlClient({
 
 const ns = explicit.ns("crm");
 await ns.tables.list();
+const overview = await ns.overview.get({ window: "24h" });
+console.log(overview);
 
 // Lazy default client, reads env on first property access only
 // Required env: RSQL_URL, RSQL_API_TOKEN

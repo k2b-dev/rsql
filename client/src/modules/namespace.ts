@@ -1,6 +1,7 @@
 import type { HttpClient } from "../http";
 import type {
   NamespaceModule,
+  OverviewWindowName,
   QueryRequest,
   QueryStatement,
   SSESubscribeOptions,
@@ -88,9 +89,9 @@ export const createNamespaceModule = (http: HttpClient, namespace: string): Name
       },
     },
 
-    stats: {
-      get() {
-        return http.json(`${base}/stats`);
+    overview: {
+      get(options?: { window?: OverviewWindowName }) {
+        return http.json(http.withQuery(`${base}/overview`, { window: options?.window }));
       },
     },
 

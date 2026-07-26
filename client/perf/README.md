@@ -52,6 +52,6 @@ The runner implements S1-S12:
 - SQL query workloads
 - SSE realtime
 - Import/export
-- Stats/changelog under load
+- Namespace overview/changelog under load
 - Multi-tenant noisy-neighbor isolation
 - Cold vs warm behavior

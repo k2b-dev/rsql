@@ -1012,7 +1012,7 @@ const scenarioS9: ScenarioDefinition = {
 
 const scenarioS10: ScenarioDefinition = {
   id: "S10",
-  name: "Stats Changelog",
+  name: "Overview Changelog",
   async run(ctx) {
     for (let repeat = 0; repeat < ctx.profile.timing.repeats; repeat++) {
       const setup = ctx.withPhase("setup", repeat);
@@ -1045,7 +1045,7 @@ const scenarioS10: ScenarioDefinition = {
           });
 
           await Promise.all([
-            pc.op(this.id, this.name, "stats.get", () => pc.client.ns(ns).stats.get(), { namespace: ns }),
+            pc.op(this.id, this.name, "overview.get", () => pc.client.ns(ns).overview.get({ window: "24h" }), { namespace: ns }),
             pc.op(this.id, this.name, "changelog.list", () => pc.client.ns(ns).changelog.list({ limit: 100, offset: seq % 100 }), { namespace: ns }),
           ]);
         };
