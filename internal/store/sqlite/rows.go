@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -35,31 +36,47 @@ const (
 // "no such table" error, and as a pre-flight check from streaming
 // endpoints that cannot retract a status code after sending headers.
 func TableOrViewExists(db *sql.DB, name string) bool {
-	var n int
-	_ = db.QueryRow(`SELECT 1 FROM sqlite_master WHERE name=? AND type IN ('table','view')`, name).Scan(&n)
-	return n == 1
+	if objectType, ok := cachedObjectType(db, name); ok {
+		return objectType != ""
+	}
+	var objectType string
+	_ = db.QueryRow(`SELECT type FROM sqlite_master WHERE name=? AND type IN ('table','view')`, name).Scan(&objectType)
+	cacheObjectType(db, name, objectType)
+	return objectType != ""
 }
 
 // IsView reports whether object is a view.
 func IsView(db *sql.DB, name string) (bool, error) {
+	if objectType, ok := cachedObjectType(db, name); ok {
+		if objectType == "" {
+			return false, sql.ErrNoRows
+		}
+		return objectType == "view", nil
+	}
 	var typ string
 	if err := db.QueryRow(`SELECT type FROM sqlite_master WHERE name=? AND type IN ('table','view')`, name).Scan(&typ); err != nil {
 		if err == sql.ErrNoRows {
+			cacheObjectType(db, name, "")
 			return false, sql.ErrNoRows
 		}
 		return false, fmt.Errorf("lookup object type: %w", err)
 	}
+	cacheObjectType(db, name, typ)
 	return typ == "view", nil
 }
 
 // TableSchemaForValidation returns schema metadata for a table.
 func TableSchemaForValidation(db *sql.DB, table string) (TableSchema, error) {
+	if schema, ok := cachedSchema(db, table); ok {
+		return schema, nil
+	}
 	var schema TableSchema
 	ok, err := GetMeta(db, "table_schema", table, &schema)
 	if err != nil {
 		return TableSchema{}, err
 	}
 	if ok {
+		cacheSchema(db, table, schema)
 		return schema, nil
 	}
 
@@ -82,6 +99,7 @@ func TableSchemaForValidation(db *sql.DB, table string) (TableSchema, error) {
 			NotNull: c["not_null"].(bool),
 		})
 	}
+	cacheSchema(db, table, schema)
 	return schema, nil
 }
 
@@ -115,6 +133,10 @@ func ListRows(db *sql.DB, table string, query map[string][]string) (any, error) 
 	limit := parseIntOrDefault(firstOrDefault(query, "limit", "100"), defaultListLimit)
 	offset := parseIntOrDefault(firstOrDefault(query, "offset", "0"), 0)
 	search := firstOrDefault(query, "search", "")
+	countMode := firstOrDefault(query, "count", "none")
+	if countMode != "none" && countMode != "exact" {
+		return nil, fmt.Errorf("count must be exact or none")
+	}
 	if limit <= 0 {
 		limit = defaultListLimit
 	}
@@ -189,28 +211,30 @@ func ListRows(db *sql.DB, table string, query map[string][]string) (any, error) 
 		return map[string]any{"data": data}, nil
 	}
 
-	var total int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM ` + quotedIdentifier(table)).Scan(&total); err != nil {
-		return nil, fmt.Errorf("total count: %w", err)
+	meta := domain.ListMeta{
+		Limit:  limit,
+		Offset: offset,
 	}
+	if countMode == "exact" {
+		var total int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM ` + quotedIdentifier(table)).Scan(&total); err != nil {
+			return nil, fmt.Errorf("total count: %w", err)
+		}
 
-	countSQL := `SELECT COUNT(*) FROM ` + quotedIdentifier(table)
-	if whereSQL != "" {
-		countSQL += ` WHERE ` + whereSQL
-	}
-	var filtered int
-	if err := db.QueryRow(countSQL, args[:len(args)-2]...).Scan(&filtered); err != nil {
-		return nil, fmt.Errorf("filter count: %w", err)
+		filtered := total
+		if whereSQL != "" {
+			countSQL := `SELECT COUNT(*) FROM ` + quotedIdentifier(table) + ` WHERE ` + whereSQL
+			if err := db.QueryRow(countSQL, args[:len(args)-2]...).Scan(&filtered); err != nil {
+				return nil, fmt.Errorf("filter count: %w", err)
+			}
+		}
+		meta.TotalCount = &total
+		meta.FilterCount = &filtered
 	}
 
 	return domain.ListResponse[map[string]any]{
 		Data: data,
-		Meta: domain.ListMeta{
-			TotalCount:  total,
-			FilterCount: filtered,
-			Limit:       limit,
-			Offset:      offset,
-		},
+		Meta: meta,
 	}, nil
 }
 
@@ -323,7 +347,7 @@ func buildOrderClause(order string) (string, error) {
 }
 
 var reservedQuery = map[string]struct{}{
-	"select": {}, "order": {}, "limit": {}, "offset": {}, "or": {}, "and": {}, "search": {},
+	"select": {}, "order": {}, "limit": {}, "offset": {}, "or": {}, "and": {}, "search": {}, "count": {},
 	// Reserved by the CSV export endpoint; never interpreted as filters.
 	"format": {}, "bom": {},
 }
@@ -667,7 +691,15 @@ func GetRowByID(db *sql.DB, table string, id any) (map[string]any, error) {
 	if err := validateIdentifier(table); err != nil {
 		return nil, err
 	}
-	rows, err := db.Query(`SELECT * FROM `+quotedIdentifier(table)+` WHERE id = ? LIMIT 1`, id)
+	query := `SELECT * FROM ` + quotedIdentifier(table) + ` WHERE id = ? LIMIT 1`
+	stmt, retained, err := cachedStatement(db, "row-by-id:"+table, query)
+	if err != nil {
+		return nil, fmt.Errorf("prepare row by id: %w", err)
+	}
+	if !retained {
+		defer stmt.Close()
+	}
+	rows, err := stmt.Query(id)
 	if err != nil {
 		return nil, fmt.Errorf("query row by id: %w", err)
 	}
@@ -685,18 +717,46 @@ func GetRowByID(db *sql.DB, table string, id any) (map[string]any, error) {
 	return list[0], nil
 }
 
-// InsertRows inserts one or many rows.
+// InsertOptions controls which inserted data must be materialized.
+type InsertOptions struct {
+	Resolution  string
+	IncludeRows bool
+	IncludeIDs  bool
+}
+
+// InsertResult describes a completed insert batch.
+type InsertResult struct {
+	Rows     []map[string]any
+	IDs      []any
+	Affected int
+}
+
+// InsertRows inserts rows and retains the historical full result contract.
 func InsertRows(db *sql.DB, table string, rowsIn []map[string]any, prefer string) ([]map[string]any, []any, error) {
-	if err := validateIdentifier(table); err != nil {
+	result, err := InsertRowsWithOptions(db, table, rowsIn, InsertOptions{
+		Resolution:  prefer,
+		IncludeRows: true,
+		IncludeIDs:  true,
+	})
+	if err != nil {
 		return nil, nil, err
 	}
+	return result.Rows, result.IDs, nil
+}
+
+// InsertRowsWithOptions inserts one or many rows while avoiding result
+// materialization that the caller does not need.
+func InsertRowsWithOptions(db *sql.DB, table string, rowsIn []map[string]any, options InsertOptions) (InsertResult, error) {
+	if err := validateIdentifier(table); err != nil {
+		return InsertResult{}, err
+	}
 	if len(rowsIn) == 0 {
-		return nil, nil, fmt.Errorf("no rows to insert")
+		return InsertResult{}, fmt.Errorf("no rows to insert")
 	}
 
 	schema, err := TableSchemaForValidation(db, table)
 	if err != nil {
-		return nil, nil, err
+		return InsertResult{}, err
 	}
 	colMap := make(map[string]domain.ColumnDefinition, len(schema.Columns))
 	for _, c := range schema.Columns {
@@ -705,53 +765,107 @@ func InsertRows(db *sql.DB, table string, rowsIn []map[string]any, prefer string
 
 	tx, err := db.Begin()
 	if err != nil {
-		return nil, nil, fmt.Errorf("begin insert: %w", err)
+		return InsertResult{}, fmt.Errorf("begin insert: %w", err)
 	}
 	defer tx.Rollback()
 
-	ids := make([]any, 0, len(rowsIn))
-
+	now := time.Now().UTC().Format(time.RFC3339)
+	cleanRows := make([]map[string]any, 0, len(rowsIn))
 	for _, input := range rowsIn {
 		clean, err := sanitizeAndValidateRow(input, colMap, true)
 		if err != nil {
-			return nil, nil, err
+			return InsertResult{}, err
 		}
 
-		clean["updated_at"] = time.Now().UTC().Format(time.RFC3339)
+		clean["updated_at"] = now
 		if _, ok := clean["created_at"]; !ok {
-			clean["created_at"] = time.Now().UTC().Format(time.RFC3339)
+			clean["created_at"] = now
 		}
-
-		stmt, args, err := buildInsertStatement(table, clean, prefer, tx)
-		if err != nil {
-			return nil, nil, err
-		}
-		stmt += ` RETURNING id`
-
-		var id int64
-		if err := tx.QueryRow(stmt, args...).Scan(&id); err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				// ON CONFLICT DO NOTHING path.
-				continue
-			}
-			return nil, nil, fmt.Errorf("insert row: %w", err)
-		}
-
-		if id == 0 {
-			continue
-		}
-		ids = append(ids, id)
+		cleanRows = append(cleanRows, clean)
 	}
 
-	inserted, err := selectRowsByIDsTx(tx, table, ids)
-	if err != nil {
-		return nil, nil, err
+	needIDs := options.IncludeIDs || options.IncludeRows
+	result := InsertResult{}
+	for start := 0; start < len(cleanRows); {
+		columns := sortedRowColumns(cleanRows[start])
+		end := start + 1
+		for end < len(cleanRows) && slices.Equal(columns, sortedRowColumns(cleanRows[end])) {
+			end++
+		}
+
+		maxRows := maxSQLVariables / len(columns)
+		if maxRows < 1 {
+			maxRows = 1
+		}
+		for chunkStart := start; chunkStart < end; chunkStart += maxRows {
+			chunkEnd := min(chunkStart+maxRows, end)
+			stmt, args, err := buildMultiInsertStatement(
+				db,
+				tx,
+				table,
+				columns,
+				cleanRows[chunkStart:chunkEnd],
+				options.Resolution,
+				needIDs,
+			)
+			if err != nil {
+				return InsertResult{}, err
+			}
+
+			if needIDs {
+				rows, err := tx.Query(stmt, args...)
+				if err != nil {
+					return InsertResult{}, fmt.Errorf("insert rows: %w", err)
+				}
+				for rows.Next() {
+					var id int64
+					if err := rows.Scan(&id); err != nil {
+						rows.Close()
+						return InsertResult{}, fmt.Errorf("scan inserted id: %w", err)
+					}
+					if id != 0 {
+						result.IDs = append(result.IDs, id)
+					}
+				}
+				if err := rows.Close(); err != nil {
+					return InsertResult{}, fmt.Errorf("close inserted ids: %w", err)
+				}
+				if err := rows.Err(); err != nil {
+					return InsertResult{}, fmt.Errorf("iterate inserted ids: %w", err)
+				}
+				continue
+			}
+
+			execResult, err := tx.Exec(stmt, args...)
+			if err != nil {
+				return InsertResult{}, fmt.Errorf("insert rows: %w", err)
+			}
+			affected, err := execResult.RowsAffected()
+			if err != nil {
+				return InsertResult{}, fmt.Errorf("read inserted count: %w", err)
+			}
+			result.Affected += int(affected)
+		}
+		start = end
+	}
+
+	if needIDs {
+		result.Affected = len(result.IDs)
+	}
+	if options.IncludeRows {
+		result.Rows, err = selectRowsByIDsTx(tx, table, result.IDs)
+		if err != nil {
+			return InsertResult{}, err
+		}
 	}
 
 	if err := tx.Commit(); err != nil {
-		return nil, nil, fmt.Errorf("commit insert: %w", err)
+		return InsertResult{}, fmt.Errorf("commit insert: %w", err)
 	}
-	return inserted, ids, nil
+	if !options.IncludeIDs {
+		result.IDs = nil
+	}
+	return result, nil
 }
 
 func sanitizeAndValidateRow(row map[string]any, columns map[string]domain.ColumnDefinition, forInsert bool) (map[string]any, error) {
@@ -934,33 +1048,56 @@ func toFloat(v any) (float64, error) {
 	}
 }
 
-func buildInsertStatement(table string, row map[string]any, prefer string, tx *sql.Tx) (string, []any, error) {
-	cols := make([]string, 0, len(row))
-	place := make([]string, 0, len(row))
-	args := make([]any, 0, len(row))
-	for col, v := range row {
-		if err := validateIdentifier(col); err != nil {
-			return "", nil, err
-		}
-		cols = append(cols, quotedIdentifier(col))
-		place = append(place, "?")
-		args = append(args, v)
+func sortedRowColumns(row map[string]any) []string {
+	columns := make([]string, 0, len(row))
+	for column := range row {
+		columns = append(columns, column)
 	}
-	if len(cols) == 0 {
+	slices.Sort(columns)
+	return columns
+}
+
+func buildMultiInsertStatement(
+	db *sql.DB,
+	tx *sql.Tx,
+	table string,
+	columns []string,
+	rows []map[string]any,
+	resolution string,
+	returnIDs bool,
+) (string, []any, error) {
+	if len(columns) == 0 {
 		return "", nil, fmt.Errorf("no writable fields")
 	}
 
-	stmt := `INSERT INTO ` + quotedIdentifier(table) + ` (` + strings.Join(cols, ",") + `) VALUES (` + strings.Join(place, ",") + `)`
-	switch prefer {
+	quotedColumns := make([]string, len(columns))
+	rowPlaceholder := "(" + strings.TrimSuffix(strings.Repeat("?,", len(columns)), ",") + ")"
+	values := make([]string, len(rows))
+	args := make([]any, 0, len(rows)*len(columns))
+	for i, column := range columns {
+		if err := validateIdentifier(column); err != nil {
+			return "", nil, err
+		}
+		quotedColumns[i] = quotedIdentifier(column)
+	}
+	for i, row := range rows {
+		values[i] = rowPlaceholder
+		for _, column := range columns {
+			args = append(args, row[column])
+		}
+	}
+
+	stmt := `INSERT INTO ` + quotedIdentifier(table) + ` (` + strings.Join(quotedColumns, ",") + `) VALUES ` + strings.Join(values, ",")
+	switch resolution {
 	case "resolution=ignore-duplicates":
 		stmt += ` ON CONFLICT DO NOTHING`
 	case "resolution=merge-duplicates":
-		target, err := conflictTarget(tx, table)
+		target, err := conflictTarget(db, tx, table)
 		if err != nil {
 			return "", nil, err
 		}
 		var updates []string
-		for _, c := range cols {
+		for _, c := range quotedColumns {
 			if c == quotedIdentifier("id") {
 				continue
 			}
@@ -968,10 +1105,16 @@ func buildInsertStatement(table string, row map[string]any, prefer string, tx *s
 		}
 		stmt += ` ON CONFLICT (` + target + `) DO UPDATE SET ` + strings.Join(updates, ",")
 	}
+	if returnIDs {
+		stmt += ` RETURNING id`
+	}
 	return stmt, args, nil
 }
 
-func conflictTarget(tx *sql.Tx, table string) (string, error) {
+func conflictTarget(db *sql.DB, tx *sql.Tx, table string) (string, error) {
+	if target, ok := cachedConflictTarget(db, table); ok {
+		return target, nil
+	}
 	rows, err := tx.Query(fmt.Sprintf("PRAGMA index_list(%s)", quotedIdentifier(table)))
 	if err != nil {
 		return "", err
@@ -1011,26 +1154,12 @@ func conflictTarget(tx *sql.Tx, table string) (string, error) {
 			for i, c := range cols {
 				quoted[i] = quotedIdentifier(c)
 			}
-			return strings.Join(quoted, ","), nil
+			target := strings.Join(quoted, ",")
+			cacheConflictTarget(db, table, target)
+			return target, nil
 		}
 	}
 	return "", fmt.Errorf("no unique index available for upsert")
-}
-
-func getRowByIDTx(tx *sql.Tx, table string, id any) (map[string]any, error) {
-	rows, err := tx.Query(`SELECT * FROM `+quotedIdentifier(table)+` WHERE id = ? LIMIT 1`, id)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	data, err := scanRows(rows)
-	if err != nil {
-		return nil, err
-	}
-	if len(data) == 0 {
-		return nil, sql.ErrNoRows
-	}
-	return data[0], nil
 }
 
 // UpdateRowByID updates a single row by id.
@@ -1039,73 +1168,125 @@ func getRowByIDTx(tx *sql.Tx, table string, id any) (map[string]any, error) {
 // to the HTTP response based on Prefer; SSE/changelog publishing relies on
 // having the row regardless.
 func UpdateRowByID(db *sql.DB, table string, id any, payload map[string]any, _ string) ([]map[string]any, error) {
-	ids, _, rows, err := updateRows(db, table, payload, `id = ?`, []any{id})
+	result, err := UpdateRowsWithOptions(
+		db,
+		table,
+		payload,
+		`id = ?`,
+		[]any{id},
+		MutationOptions{IncludeRows: true},
+	)
 	if err != nil {
 		return nil, err
 	}
-	if len(ids) == 0 {
+	if result.Affected == 0 {
 		return nil, sql.ErrNoRows
 	}
-	return rows, nil
+	return result.Rows, nil
 }
 
 // DeleteRowByID always returns the deleted row so the service layer can
 // publish an SSE event and write to the changelog regardless of Prefer.
 func DeleteRowByID(db *sql.DB, table string, id any, _ string) ([]map[string]any, error) {
-	ids, rows, err := deleteRows(db, table, `id = ?`, []any{id})
+	result, err := DeleteRowsWithOptions(
+		db,
+		table,
+		`id = ?`,
+		[]any{id},
+		MutationOptions{IncludeRows: true},
+	)
 	if err != nil {
 		return nil, err
 	}
-	if len(ids) == 0 {
+	if result.Affected == 0 {
 		return nil, sql.ErrNoRows
 	}
-	return rows, nil
+	return result.Rows, nil
 }
 
 // BulkUpdateRows updates filtered rows.
 func BulkUpdateRows(db *sql.DB, table string, payload map[string]any, where string, whereArgs []any, prefer string) ([]any, []map[string]any, error) {
-	ids, _, rows, err := updateRows(db, table, payload, where, whereArgs)
+	result, err := UpdateRowsWithOptions(
+		db,
+		table,
+		payload,
+		where,
+		whereArgs,
+		MutationOptions{
+			IncludeRows: prefer == "return=representation",
+			IncludeIDs:  true,
+		},
+	)
 	if err != nil {
 		return nil, nil, err
 	}
-	if prefer == "return=representation" {
-		return ids, rows, nil
-	}
-	return ids, nil, nil
+	return result.IDs, result.Rows, nil
 }
 
 // BulkDeleteRows deletes filtered rows.
 func BulkDeleteRows(db *sql.DB, table string, where string, whereArgs []any, prefer string) ([]any, []map[string]any, error) {
-	ids, rows, err := deleteRows(db, table, where, whereArgs)
+	result, err := DeleteRowsWithOptions(
+		db,
+		table,
+		where,
+		whereArgs,
+		MutationOptions{
+			IncludeRows: prefer == "return=representation",
+			IncludeIDs:  true,
+		},
+	)
 	if err != nil {
 		return nil, nil, err
 	}
-	if prefer == "return=representation" {
-		return ids, rows, nil
-	}
-	return ids, nil, nil
+	return result.IDs, result.Rows, nil
 }
 
-func updateRows(db *sql.DB, table string, payload map[string]any, where string, whereArgs []any) ([]any, int, []map[string]any, error) {
+// MutationOptions controls which affected data must be materialized.
+type MutationOptions struct {
+	IncludeRows bool
+	IncludeIDs  bool
+}
+
+// MutationResult describes a completed update or delete.
+type MutationResult struct {
+	Rows     []map[string]any
+	IDs      []any
+	Affected int
+}
+
+// UpdateRowsWithOptions updates rows while avoiding pre- and post-selects
+// unless the caller needs IDs or row representations.
+func UpdateRowsWithOptions(
+	db *sql.DB,
+	table string,
+	payload map[string]any,
+	where string,
+	whereArgs []any,
+	options MutationOptions,
+) (MutationResult, error) {
 	if err := validateIdentifier(table); err != nil {
-		return nil, 0, nil, err
+		return MutationResult{}, err
 	}
 	schema, err := TableSchemaForValidation(db, table)
 	if err != nil {
-		return nil, 0, nil, err
+		return MutationResult{}, err
 	}
 	tx, err := db.Begin()
 	if err != nil {
-		return nil, 0, nil, err
+		return MutationResult{}, err
 	}
 	defer tx.Rollback()
 
-	ids, err := selectIDsTx(tx, table, where, whereArgs)
-	if err != nil {
-		return nil, 0, nil, err
-	}
-	if len(ids) == 0 {
-		return nil, 0, nil, nil
+	needIDs := options.IncludeIDs || options.IncludeRows
+	result := MutationResult{}
+	if needIDs {
+		result.IDs, err = selectIDsTx(tx, table, where, whereArgs)
+		if err != nil {
+			return MutationResult{}, err
+		}
+		if len(result.IDs) == 0 {
+			return result, nil
+		}
 	}
 
 	colMap := make(map[string]domain.ColumnDefinition, len(schema.Columns))
@@ -1115,7 +1296,7 @@ func updateRows(db *sql.DB, table string, payload map[string]any, where string, 
 
 	set, args, err := buildUpdateSet(payload, colMap)
 	if err != nil {
-		return nil, 0, nil, err
+		return MutationResult{}, err
 	}
 	set = append(set, `updated_at = ?`)
 	args = append(args, time.Now().UTC().Format(time.RFC3339))
@@ -1128,20 +1309,31 @@ func updateRows(db *sql.DB, table string, payload map[string]any, where string, 
 
 	res, err := tx.Exec(stmt, args...)
 	if err != nil {
-		return nil, 0, nil, err
+		return MutationResult{}, err
 	}
-	affected, _ := res.RowsAffected()
-
-	rows, err := selectRowsByIDsTx(tx, table, ids)
+	affected, err := res.RowsAffected()
 	if err != nil {
-		return nil, 0, nil, err
+		return MutationResult{}, err
+	}
+	result.Affected = int(affected)
+	if result.Affected == 0 {
+		return result, nil
+	}
+
+	if options.IncludeRows {
+		result.Rows, err = selectRowsByIDsTx(tx, table, result.IDs)
+		if err != nil {
+			return MutationResult{}, err
+		}
 	}
 
 	if err := tx.Commit(); err != nil {
-		return nil, 0, nil, err
+		return MutationResult{}, err
 	}
-
-	return ids, int(affected), rows, nil
+	if !options.IncludeIDs {
+		result.IDs = nil
+	}
+	return result, nil
 }
 
 func buildUpdateSet(payload map[string]any, columns map[string]domain.ColumnDefinition) ([]string, []any, error) {
@@ -1234,39 +1426,62 @@ func buildAtomicOp(colName string, col domain.ColumnDefinition, op string, arg a
 	}
 }
 
-func deleteRows(db *sql.DB, table, where string, whereArgs []any) ([]any, []map[string]any, error) {
+// DeleteRowsWithOptions deletes rows while avoiding a pre-select unless the
+// caller needs IDs or row representations.
+func DeleteRowsWithOptions(
+	db *sql.DB,
+	table string,
+	where string,
+	whereArgs []any,
+	options MutationOptions,
+) (MutationResult, error) {
 	if err := validateIdentifier(table); err != nil {
-		return nil, nil, err
+		return MutationResult{}, err
 	}
 	tx, err := db.Begin()
 	if err != nil {
-		return nil, nil, err
+		return MutationResult{}, err
 	}
 	defer tx.Rollback()
 
-	ids, err := selectIDsTx(tx, table, where, whereArgs)
-	if err != nil {
-		return nil, nil, err
-	}
-	if len(ids) == 0 {
-		return nil, nil, nil
-	}
-	rows, err := selectRowsByIDsTx(tx, table, ids)
-	if err != nil {
-		return nil, nil, err
+	needIDs := options.IncludeIDs || options.IncludeRows
+	result := MutationResult{}
+	if needIDs {
+		result.IDs, err = selectIDsTx(tx, table, where, whereArgs)
+		if err != nil {
+			return MutationResult{}, err
+		}
+		if len(result.IDs) == 0 {
+			return result, nil
+		}
+		if options.IncludeRows {
+			result.Rows, err = selectRowsByIDsTx(tx, table, result.IDs)
+			if err != nil {
+				return MutationResult{}, err
+			}
+		}
 	}
 
 	stmt := `DELETE FROM ` + quotedIdentifier(table)
 	if where != "" {
 		stmt += ` WHERE ` + where
 	}
-	if _, err := tx.Exec(stmt, whereArgs...); err != nil {
-		return nil, nil, err
+	execResult, err := tx.Exec(stmt, whereArgs...)
+	if err != nil {
+		return MutationResult{}, err
 	}
+	affected, err := execResult.RowsAffected()
+	if err != nil {
+		return MutationResult{}, err
+	}
+	result.Affected = int(affected)
 	if err := tx.Commit(); err != nil {
-		return nil, nil, err
+		return MutationResult{}, err
 	}
-	return ids, rows, nil
+	if !options.IncludeIDs {
+		result.IDs = nil
+	}
+	return result, nil
 }
 
 func selectIDsTx(tx *sql.Tx, table, where string, args []any) ([]any, error) {

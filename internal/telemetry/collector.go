@@ -191,6 +191,30 @@ func (c *Collector) Latest() (map[string]Bucket, error) {
 	return latest, nil
 }
 
+// LatestFor returns the latest telemetry only for the requested namespaces.
+func (c *Collector) LatestFor(namespaces []string) (map[string]Bucket, error) {
+	latest, err := c.store.latestFor(namespaces)
+	if err != nil {
+		return nil, err
+	}
+	wanted := make(map[string]struct{}, len(namespaces))
+	for _, namespace := range namespaces {
+		wanted[namespace] = struct{}{}
+	}
+	c.mu.Lock()
+	for key, state := range c.buckets {
+		if _, ok := wanted[key.namespace]; !ok {
+			continue
+		}
+		current, ok := latest[key.namespace]
+		if !ok || state.bucket.BucketStart >= current.BucketStart {
+			latest[key.namespace] = cloneBucket(state.bucket)
+		}
+	}
+	c.mu.Unlock()
+	return latest, nil
+}
+
 // Purge deletes all telemetry for a namespace.
 func (c *Collector) Purge(namespace string) error {
 	c.mu.Lock()

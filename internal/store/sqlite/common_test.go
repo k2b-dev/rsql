@@ -10,9 +10,19 @@ import (
 func TestCommonHelpersAndMeta(t *testing.T) {
 	db, _ := openTestDB(t)
 
-	cfg := domain.NamespaceConfig{JournalMode: "wal", BusyTimeout: 1000, MaxDBSize: 1 << 20, QueryTimeout: 1000, ForeignKeys: domain.BoolPtr(true), ReadOnly: false}
+	cfg := domain.NamespaceConfig{JournalMode: "wal", Synchronous: "normal", BusyTimeout: 1000, MaxDBSize: 1 << 20, QueryTimeout: 1000, ForeignKeys: domain.BoolPtr(true), ReadOnly: false}
 	if err := ApplyNamespaceConfig(db, cfg); err != nil {
 		t.Fatalf("apply namespace config: %v", err)
+	}
+	var synchronous int
+	if err := db.QueryRow("PRAGMA synchronous").Scan(&synchronous); err != nil {
+		t.Fatalf("read synchronous: %v", err)
+	}
+	if synchronous != 1 {
+		t.Fatalf("expected synchronous NORMAL (1), got %d", synchronous)
+	}
+	if err := ApplyNamespaceConfig(db, domain.NamespaceConfig{Synchronous: "off"}); err == nil {
+		t.Fatal("expected unsafe synchronous mode to be rejected")
 	}
 
 	if boolInt(true) != 1 || boolInt(false) != 0 {

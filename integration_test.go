@@ -34,7 +34,7 @@ func TestGoClientFullAPI(t *testing.T) {
 	}
 
 	namespaces, err := client.Admin().Namespaces.List(ctx)
-	if err != nil || len(namespaces) != 1 {
+	if err != nil || len(namespaces.Data) != 1 {
 		t.Fatalf("list namespaces: %#v, %v", namespaces, err)
 	}
 	record, err := client.Admin().Namespaces.Get(ctx, "go_client")
@@ -103,8 +103,8 @@ func TestGoClientFullAPI(t *testing.T) {
 	}, MutateOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	rows, err := contacts.Rows.List(ctx, map[string][]string{"status": {"eq.active"}})
-	if err != nil || rows.Meta == nil || rows.Meta.FilterCount != 2 {
+	rows, err := contacts.Rows.List(ctx, map[string][]string{"status": {"eq.active"}, "count": {"exact"}})
+	if err != nil || rows.Meta == nil || rows.Meta.FilterCount == nil || *rows.Meta.FilterCount != 2 {
 		t.Fatalf("list rows: %#v, %v", rows, err)
 	}
 	row, err := contacts.Rows.Get(ctx, 1)
@@ -265,7 +265,7 @@ func TestGoClientFullAPI(t *testing.T) {
 
 func integrationClient(t *testing.T) *Client {
 	t.Helper()
-	svc, err := service.New(t.TempDir(), 0)
+	svc, err := service.New(t.TempDir(), 0, 128, 1)
 	if err != nil {
 		t.Fatal(err)
 	}

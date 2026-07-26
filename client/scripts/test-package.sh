@@ -27,7 +27,7 @@ const client: RsqlClient = createRsqlClient({
   url: "https://rsql.example",
   token: "test-token",
   fetch: async () =>
-    new Response("[]", {
+    new Response('{"data":[]}', {
       status: 200,
       headers: { "content-type": "application/json" },
     }),
@@ -38,7 +38,7 @@ if (typeof rsql !== "object") {
 }
 
 const result = await client.namespaces.list();
-if (!result.ok || result.data.length !== 0) {
+if (!result.ok || result.data.data.length !== 0) {
   throw new Error("packed client request failed");
 }
 EOF

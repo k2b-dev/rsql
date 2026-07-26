@@ -1,6 +1,7 @@
 package namespace
 
 import (
+	"container/list"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -13,29 +14,46 @@ import (
 
 // Config configures namespace manager lifecycle behavior.
 type Config struct {
-	IdleTimeout time.Duration
-	MaxRetained int
-	OnOpen      func(name string, readDB, writeDB *sql.DB) error
-	OnWriteWait func(name string, wait time.Duration)
+	IdleTimeout  time.Duration
+	MaxRetained  int
+	ReadConns    int
+	BeforeOpen   func(name, path string) error
+	OnReadOpen   func(name, path string, db *sql.DB) error
+	OnWriteOpen  func(name, path string, db *sql.DB) error
+	OnReadClose  func(name, path string, db *sql.DB)
+	OnWriteClose func(name, path string, db *sql.DB)
+	OnWriteWait  func(name string, wait time.Duration)
+}
+
+type openCall struct {
+	done chan struct{}
+	err  error
 }
 
 type handle struct {
-	readDB    *sql.DB
-	writeDB   *sql.DB
-	lifecycle sync.RWMutex
-	writeMu   sync.Mutex
-	lastUsed  int64
-	closed    atomic.Bool
+	name       string
+	path       string
+	readDB     *sql.DB
+	writeDB    *sql.DB
+	poolsMu    sync.Mutex
+	lifecycle  sync.RWMutex
+	writeMu    sync.Mutex
+	lastUsed   int64
+	referenced atomic.Bool
+	element    *list.Element
 }
 
 // Manager manages namespace DB handles and per-namespace locks.
 type Manager struct {
-	mu        sync.Mutex
+	mu        sync.RWMutex
 	handles   map[string]*handle
+	opening   map[string]*openCall
+	order     *list.List
 	cfg       Config
 	closed    chan struct{}
 	closeOnce sync.Once
 	shutdown  atomic.Bool
+	retained  atomic.Int64
 }
 
 // NewManager creates a namespace manager.
@@ -43,8 +61,13 @@ func NewManager(cfg Config) *Manager {
 	if cfg.MaxRetained <= 0 {
 		cfg.MaxRetained = 128
 	}
+	if cfg.ReadConns <= 0 {
+		cfg.ReadConns = 1
+	}
 	m := &Manager{
 		handles: make(map[string]*handle),
+		opening: make(map[string]*openCall),
+		order:   list.New(),
 		cfg:     cfg,
 		closed:  make(chan struct{}),
 	}
@@ -85,11 +108,8 @@ func (m *Manager) collectIdle() {
 	}
 	cutoff := time.Now().Add(-m.cfg.IdleTimeout)
 
-	// Claim phase: under m.mu, identify idle handles and remove them from
-	// the map. We hold each victim's write lock past this phase so any
-	// concurrent reader/writer that already obtained the *handle pointer
-	// will block until the close phase finishes — and then observe the
-	// `closed` flag and refuse to use the stale DB.
+	// Claim a bounded number of idle handles under m.mu. Lifecycle locks stay
+	// held through close so requests already pinned to a handle can finish.
 	type victim struct {
 		name string
 		h    *handle
@@ -97,33 +117,38 @@ func (m *Manager) collectIdle() {
 	var victims []victim
 
 	m.mu.Lock()
-	for name, h := range m.handles {
-		// lastUsed is atomic; no per-handle lock needed for the heuristic.
+	scans := min(m.order.Len(), 256)
+	for range scans {
+		element := m.order.Front()
+		if element == nil {
+			break
+		}
+		h := element.Value.(*handle)
 		if !h.lastUsedAt().Before(cutoff) {
+			m.order.MoveToBack(element)
 			continue
 		}
-		// Try to claim exclusively. If a request is currently using this
-		// handle, skip it and revisit on the next tick.
 		if !h.lifecycle.TryLock() {
+			m.order.MoveToBack(element)
 			continue
 		}
-		// Re-check after locking — a request may have touched the handle
-		// between the atomic read and the TryLock.
 		if !h.lastUsedAt().Before(cutoff) {
 			h.lifecycle.Unlock()
+			m.order.MoveToBack(element)
 			continue
 		}
-		h.closed.Store(true)
-		delete(m.handles, name)
-		victims = append(victims, victim{name, h})
-		// Keep the lifecycle lock held until both pools are closed.
+		delete(m.handles, h.name)
+		m.retained.Add(-1)
+		m.order.Remove(element)
+		h.element = nil
+		victims = append(victims, victim{h.name, h})
 	}
 	m.mu.Unlock()
 
 	// Close phase: outside m.mu so getOrOpen calls for unrelated namespaces
 	// stay responsive even if Close() takes time draining connections.
 	for _, v := range victims {
-		v.h.closePools()
+		m.closeHandle(v.name, v.h)
 		v.h.lifecycle.Unlock()
 	}
 }
@@ -135,121 +160,210 @@ func (m *Manager) Close() error {
 		m.shutdown.Store(true)
 		close(m.closed)
 
+		m.mu.RLock()
+		opening := make([]*openCall, 0, len(m.opening))
+		for _, call := range m.opening {
+			opening = append(opening, call)
+		}
+		m.mu.RUnlock()
+		for _, call := range opening {
+			<-call.done
+		}
+
 		m.mu.Lock()
-		defer m.mu.Unlock()
+		handles := make(map[string]*handle, len(m.handles))
 		for name, h := range m.handles {
-			h.lifecycle.Lock()
-			h.closed.Store(true)
-			h.closePools()
-			h.lifecycle.Unlock()
+			handles[name] = h
 			delete(m.handles, name)
+			h.element = nil
+		}
+		m.order.Init()
+		m.retained.Store(0)
+		m.mu.Unlock()
+
+		for name, h := range handles {
+			h.lifecycle.Lock()
+			m.closeHandle(name, h)
+			h.lifecycle.Unlock()
 		}
 	})
 	return nil
 }
 
-func (m *Manager) getOrOpen(name, path string) (*handle, error) {
-	if m.shutdown.Load() {
-		return nil, fmt.Errorf("namespace manager is shut down")
-	}
-	m.mu.Lock()
-	if h, ok := m.handles[name]; ok {
-		h.touch()
+// getOrOpenPinned returns a handle with its lifecycle read lock held. Pinning
+// while the manager lock still protects the map closes the race where a newly
+// opened handle could be evicted before its request started using it.
+func (m *Manager) getOrOpenPinned(name, path string) (*handle, error) {
+	for {
+		if m.shutdown.Load() {
+			return nil, fmt.Errorf("namespace manager is shut down")
+		}
+		m.mu.RLock()
+		if h, ok := m.handles[name]; ok {
+			h.lifecycle.RLock()
+			h.touch()
+			m.mu.RUnlock()
+			return h, nil
+		}
+		m.mu.RUnlock()
+
+		m.mu.Lock()
+		if m.shutdown.Load() {
+			m.mu.Unlock()
+			return nil, fmt.Errorf("namespace manager is shut down")
+		}
+		if h, ok := m.handles[name]; ok {
+			h.lifecycle.RLock()
+			h.touch()
+			m.mu.Unlock()
+			return h, nil
+		}
+		if call, ok := m.opening[name]; ok {
+			m.mu.Unlock()
+			<-call.done
+			if call.err != nil {
+				return nil, call.err
+			}
+			continue
+		}
+		call := &openCall{done: make(chan struct{})}
+		m.opening[name] = call
 		m.mu.Unlock()
+
+		h, err := m.openHandle(name, path)
+
+		m.mu.Lock()
+		if err == nil && m.shutdown.Load() {
+			err = fmt.Errorf("namespace manager is shut down")
+		}
+		if err == nil {
+			h.lifecycle.RLock()
+			m.handles[name] = h
+			m.retained.Add(1)
+			h.element = m.order.PushBack(h)
+		}
+		call.err = err
+		delete(m.opening, name)
+		close(call.done)
+		m.mu.Unlock()
+
+		if err != nil {
+			if h != nil {
+				_ = m.closeHandle(name, h)
+			}
+			return nil, err
+		}
+		m.collectExcess(name)
 		return h, nil
 	}
-	m.mu.Unlock()
+}
 
-	readDSN := path + "?_pragma=query_only(1)&_pragma=busy_timeout(5000)"
-	readDB, err := sql.Open("sqlite", readDSN)
-	if err != nil {
-		return nil, fmt.Errorf("open namespace read pool: %w", err)
-	}
-	readDB.SetMaxOpenConns(4)
-	readDB.SetMaxIdleConns(1)
-
-	writeDSN := path + "?_pragma=busy_timeout(5000)"
-	writeDB, err := sql.Open("sqlite", writeDSN)
-	if err != nil {
-		_ = readDB.Close()
-		return nil, fmt.Errorf("open namespace write pool: %w", err)
-	}
-	writeDB.SetMaxOpenConns(1)
-	writeDB.SetMaxIdleConns(1)
-
-	if m.cfg.OnOpen != nil {
-		if err := m.cfg.OnOpen(name, readDB, writeDB); err != nil {
-			_ = readDB.Close()
-			_ = writeDB.Close()
-			return nil, fmt.Errorf("configure namespace db: %w", err)
+func (m *Manager) openHandle(name, path string) (*handle, error) {
+	if m.cfg.BeforeOpen != nil {
+		if err := m.cfg.BeforeOpen(name, path); err != nil {
+			return nil, fmt.Errorf("prepare namespace open: %w", err)
 		}
 	}
 
-	h := &handle{readDB: readDB, writeDB: writeDB}
+	h := &handle{name: name, path: path}
 	h.touch()
-
-	m.mu.Lock()
-	if existing, ok := m.handles[name]; ok {
-		m.mu.Unlock()
-		h.closePools()
-		existing.touch()
-		return existing, nil
-	}
-	m.handles[name] = h
-	m.mu.Unlock()
-	m.collectExcess(name)
-
 	return h, nil
 }
 
-// WithRead executes fn under namespace read lock. If the handle was evicted
-// by the reaper between getOrOpen and lock acquisition, it retries with a
-// freshly opened handle.
-func (m *Manager) WithRead(name, path string, fn func(*sql.DB) error) error {
-	for attempt := 0; attempt < 3; attempt++ {
-		h, err := m.getOrOpen(name, path)
-		if err != nil {
-			return err
-		}
-		h.lifecycle.RLock()
-		if h.closed.Load() {
-			h.lifecycle.RUnlock()
-			continue
-		}
-		h.touch()
-		err = fn(h.readDB)
-		h.lifecycle.RUnlock()
-		return err
+func (m *Manager) readPool(h *handle) (*sql.DB, error) {
+	h.poolsMu.Lock()
+	defer h.poolsMu.Unlock()
+	if h.readDB != nil {
+		return h.readDB, nil
 	}
-	return fmt.Errorf("namespace handle repeatedly evicted")
+
+	dsn := h.path + "?_pragma=query_only(1)&_pragma=busy_timeout(5000)"
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("open namespace read pool: %w", err)
+	}
+	db.SetMaxOpenConns(m.cfg.ReadConns)
+	db.SetMaxIdleConns(1)
+	if m.cfg.OnReadOpen != nil {
+		if err := m.cfg.OnReadOpen(h.name, h.path, db); err != nil {
+			if m.cfg.OnReadClose != nil {
+				m.cfg.OnReadClose(h.name, h.path, db)
+			}
+			_ = db.Close()
+			return nil, fmt.Errorf("configure namespace read pool: %w", err)
+		}
+	}
+	h.readDB = db
+	return db, nil
 }
 
-// WithWrite executes fn under namespace write lock. If the handle was evicted
-// by the reaper between getOrOpen and lock acquisition, it retries with a
-// freshly opened handle.
-func (m *Manager) WithWrite(name, path string, fn func(*sql.DB) error) error {
-	for attempt := 0; attempt < 3; attempt++ {
-		h, err := m.getOrOpen(name, path)
-		if err != nil {
-			return err
+func (m *Manager) writePool(h *handle) (*sql.DB, error) {
+	h.poolsMu.Lock()
+	defer h.poolsMu.Unlock()
+	if h.writeDB != nil {
+		return h.writeDB, nil
+	}
+
+	dsn := h.path + "?_pragma=busy_timeout(5000)"
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("open namespace write pool: %w", err)
+	}
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	if m.cfg.OnWriteOpen != nil {
+		if err := m.cfg.OnWriteOpen(h.name, h.path, db); err != nil {
+			if m.cfg.OnWriteClose != nil {
+				m.cfg.OnWriteClose(h.name, h.path, db)
+			}
+			_ = db.Close()
+			return nil, fmt.Errorf("configure namespace write pool: %w", err)
 		}
-		h.lifecycle.RLock()
-		if h.closed.Load() {
-			h.lifecycle.RUnlock()
-			continue
-		}
-		waitStarted := time.Now()
-		h.writeMu.Lock()
-		if m.cfg.OnWriteWait != nil {
-			m.cfg.OnWriteWait(name, time.Since(waitStarted))
-		}
-		h.touch()
-		err = fn(h.writeDB)
-		h.writeMu.Unlock()
-		h.lifecycle.RUnlock()
+	}
+	h.writeDB = db
+	return db, nil
+}
+
+// WithRead executes fn under the pinned namespace read lock.
+func (m *Manager) WithRead(name, path string, fn func(*sql.DB) error) error {
+	h, err := m.getOrOpenPinned(name, path)
+	if err != nil {
 		return err
 	}
-	return fmt.Errorf("namespace handle repeatedly evicted")
+	defer func() {
+		h.lifecycle.RUnlock()
+		m.trimExcess()
+	}()
+	readDB, err := m.readPool(h)
+	if err != nil {
+		return err
+	}
+	return fn(readDB)
+}
+
+// WithWrite executes fn under the pinned namespace write lock.
+func (m *Manager) WithWrite(name, path string, fn func(*sql.DB) error) error {
+	h, err := m.getOrOpenPinned(name, path)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		h.lifecycle.RUnlock()
+		m.trimExcess()
+	}()
+
+	waitStarted := time.Now()
+	h.writeMu.Lock()
+	defer h.writeMu.Unlock()
+	if m.cfg.OnWriteWait != nil {
+		m.cfg.OnWriteWait(name, time.Since(waitStarted))
+	}
+	h.touch()
+	writeDB, err := m.writePool(h)
+	if err != nil {
+		return err
+	}
+	return fn(writeDB)
 }
 
 // CloseHandle closes and removes a namespace handle from the manager.
@@ -258,6 +372,11 @@ func (m *Manager) CloseHandle(name string) error {
 	h, ok := m.handles[name]
 	if ok {
 		delete(m.handles, name)
+		m.retained.Add(-1)
+		if h.element != nil {
+			m.order.Remove(h.element)
+			h.element = nil
+		}
 	}
 	m.mu.Unlock()
 	if !ok {
@@ -265,12 +384,12 @@ func (m *Manager) CloseHandle(name string) error {
 	}
 	h.lifecycle.Lock()
 	defer h.lifecycle.Unlock()
-	h.closed.Store(true)
-	return h.closePools()
+	return m.closeHandle(name, h)
 }
 
 func (h *handle) touch() {
 	atomic.StoreInt64(&h.lastUsed, time.Now().UnixNano())
+	h.referenced.Store(true)
 }
 
 func (h *handle) lastUsedAt() time.Time {
@@ -282,7 +401,26 @@ func (h *handle) lastUsedAt() time.Time {
 }
 
 func (h *handle) closePools() error {
-	return errors.Join(h.readDB.Close(), h.writeDB.Close())
+	var errs []error
+	if h.readDB != nil {
+		errs = append(errs, h.readDB.Close())
+	}
+	if h.writeDB != nil {
+		errs = append(errs, h.writeDB.Close())
+	}
+	return errors.Join(errs...)
+}
+
+func (m *Manager) closeHandle(name string, h *handle) error {
+	h.poolsMu.Lock()
+	defer h.poolsMu.Unlock()
+	if h.readDB != nil && m.cfg.OnReadClose != nil {
+		m.cfg.OnReadClose(name, h.path, h.readDB)
+	}
+	if h.writeDB != nil && m.cfg.OnWriteClose != nil {
+		m.cfg.OnWriteClose(name, h.path, h.writeDB)
+	}
+	return h.closePools()
 }
 
 func (m *Manager) collectExcess(exclude string) {
@@ -293,41 +431,57 @@ func (m *Manager) collectExcess(exclude string) {
 			return
 		}
 
-		var oldestName string
-		var oldest *handle
-		for name, h := range m.handles {
-			if name == exclude {
-				continue
-			}
-			if !h.lifecycle.TryLock() {
-				continue
-			}
-			if oldest == nil || h.lastUsedAt().Before(oldest.lastUsedAt()) {
-				if oldest != nil {
-					oldest.lifecycle.Unlock()
+		var victim *handle
+		for pass := range 2 {
+			scans := min(m.order.Len(), 64)
+			for range scans {
+				element := m.order.Front()
+				if element == nil {
+					break
 				}
-				oldestName = name
-				oldest = h
-				continue
+				h := element.Value.(*handle)
+				m.order.MoveToBack(element)
+				if h.name == exclude {
+					continue
+				}
+				referenced := h.referenced.Swap(false)
+				if pass == 0 && referenced {
+					continue
+				}
+				if !h.lifecycle.TryLock() {
+					continue
+				}
+				victim = h
+				break
 			}
-			h.lifecycle.Unlock()
+			if victim != nil {
+				break
+			}
 		}
-		if oldest == nil {
+		if victim == nil {
 			m.mu.Unlock()
 			return
 		}
-		oldest.closed.Store(true)
-		delete(m.handles, oldestName)
+		delete(m.handles, victim.name)
+		m.retained.Add(-1)
+		if victim.element != nil {
+			m.order.Remove(victim.element)
+			victim.element = nil
+		}
 		m.mu.Unlock()
 
-		oldest.closePools()
-		oldest.lifecycle.Unlock()
+		m.closeHandle(victim.name, victim)
+		victim.lifecycle.Unlock()
+	}
+}
+
+func (m *Manager) trimExcess() {
+	if m.retained.Load() > int64(m.cfg.MaxRetained) {
+		m.collectExcess("")
 	}
 }
 
 // OpenCount returns the number of retained namespace handles.
 func (m *Manager) OpenCount() int {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return len(m.handles)
+	return int(m.retained.Load())
 }

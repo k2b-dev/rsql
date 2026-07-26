@@ -156,6 +156,29 @@ func TestCollectorPersistsAcrossRestart(t *testing.T) {
 	}
 }
 
+func TestCollectorLatestForFiltersNamespaces(t *testing.T) {
+	store, err := openStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	collector := newCollector(store, time.Hour, func() time.Time { return now })
+	collector.Record(Event{Namespace: "alpha", Operation: "rows.get", Status: 200})
+	collector.Record(Event{Namespace: "bravo", Operation: "rows.get", Status: 200})
+	if err := collector.Flush(); err != nil {
+		t.Fatal(err)
+	}
+
+	latest, err := collector.LatestFor([]string{"bravo", "missing"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(latest) != 1 || latest["bravo"].Reads != 1 {
+		t.Fatalf("unexpected filtered telemetry: %#v", latest)
+	}
+	_ = store.close()
+}
+
 func BenchmarkCollectorRecord(b *testing.B) {
 	now := time.Now().UTC()
 	collector := newCollector(nil, time.Hour, func() time.Time { return now })

@@ -13,7 +13,7 @@ import (
 func BenchmarkFleetListing(b *testing.B) {
 	for _, count := range []int{100, 250, 500} {
 		b.Run(fmt.Sprintf("provisioned_%d", count), func(b *testing.B) {
-			svc, err := New(b.TempDir(), 0)
+			svc, err := New(b.TempDir(), 0, 128, 1)
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -27,7 +27,7 @@ func BenchmarkFleetListing(b *testing.B) {
 
 			b.ResetTimer()
 			for range b.N {
-				if _, err := svc.ListNamespaces(); err != nil {
+				if _, err := svc.ListNamespaces(100, ""); err != nil {
 					b.Fatal(err)
 				}
 			}
@@ -38,7 +38,7 @@ func BenchmarkFleetListing(b *testing.B) {
 func BenchmarkActiveNamespaceReads(b *testing.B) {
 	for _, count := range []int{25, 50, 100} {
 		b.Run(fmt.Sprintf("active_%d", count), func(b *testing.B) {
-			svc, err := New(b.TempDir(), 0)
+			svc, err := New(b.TempDir(), 0, 128, 1)
 			if err != nil {
 				b.Fatal(err)
 			}

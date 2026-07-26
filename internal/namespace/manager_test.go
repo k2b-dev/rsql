@@ -2,6 +2,7 @@ package namespace
 
 import (
 	"database/sql"
+	"fmt"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
@@ -240,6 +241,188 @@ func TestManagerBoundsRetainedHandles(t *testing.T) {
 	}
 	if got := m.OpenCount(); got > 2 {
 		t.Fatalf("retained %d handles, want at most 2", got)
+	}
+}
+
+func TestManagerDoesNotFailUnderCapacityChurn(t *testing.T) {
+	m := NewManager(Config{MaxRetained: 4})
+	defer m.Close()
+
+	const namespaceCount = 32
+	dir := t.TempDir()
+	paths := make([]string, namespaceCount)
+	for index := range paths {
+		paths[index] = filepath.Join(dir, fmt.Sprintf("churn-%d.db", index))
+		if err := m.WithWrite(fmt.Sprintf("churn-%d", index), paths[index], func(db *sql.DB) error {
+			_, err := db.Exec(`CREATE TABLE t (id INTEGER PRIMARY KEY)`)
+			return err
+		}); err != nil {
+			t.Fatalf("seed namespace %d: %v", index, err)
+		}
+	}
+
+	var failures atomic.Int64
+	var wg sync.WaitGroup
+	for worker := 0; worker < 32; worker++ {
+		wg.Add(1)
+		go func(worker int) {
+			defer wg.Done()
+			for operation := 0; operation < 50; operation++ {
+				index := (worker + operation) % namespaceCount
+				name := fmt.Sprintf("churn-%d", index)
+				if err := m.WithRead(name, paths[index], func(db *sql.DB) error {
+					var count int
+					return db.QueryRow(`SELECT COUNT(*) FROM t`).Scan(&count)
+				}); err != nil {
+					failures.Add(1)
+				}
+			}
+		}(worker)
+	}
+	wg.Wait()
+
+	if got := failures.Load(); got != 0 {
+		t.Fatalf("capacity churn produced %d failed reads", got)
+	}
+	if got := m.OpenCount(); got > 4 {
+		t.Fatalf("capacity churn retained %d handles, want at most 4", got)
+	}
+}
+
+func TestManagerConfiguresReadConnectionLimit(t *testing.T) {
+	m := NewManager(Config{ReadConns: 3})
+	defer m.Close()
+
+	path := filepath.Join(t.TempDir(), "read-pool.db")
+	if err := m.WithRead("read-pool", path, func(db *sql.DB) error {
+		if got := db.Stats().MaxOpenConnections; got != 3 {
+			t.Fatalf("max open read connections = %d, want 3", got)
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("open read pool: %v", err)
+	}
+}
+
+func TestManagerCoalescesConcurrentOpen(t *testing.T) {
+	var opens atomic.Int64
+	var closes atomic.Int64
+	m := NewManager(Config{
+		OnReadOpen: func(_, _ string, _ *sql.DB) error {
+			opens.Add(1)
+			time.Sleep(20 * time.Millisecond)
+			return nil
+		},
+		OnReadClose: func(_, _ string, _ *sql.DB) {
+			closes.Add(1)
+		},
+	})
+
+	path := filepath.Join(t.TempDir(), "coalesced.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TABLE t (id INTEGER PRIMARY KEY)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	errs := make(chan error, 32)
+	for i := 0; i < 32; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			errs <- m.WithRead("shared", path, func(db *sql.DB) error {
+				var count int
+				return db.QueryRow(`SELECT COUNT(*) FROM t`).Scan(&count)
+			})
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent read: %v", err)
+		}
+	}
+	if got := opens.Load(); got != 1 {
+		t.Fatalf("opened namespace %d times, want 1", got)
+	}
+	if err := m.Close(); err != nil {
+		t.Fatalf("close manager: %v", err)
+	}
+	if got := closes.Load(); got != 1 {
+		t.Fatalf("closed namespace %d times, want 1", got)
+	}
+}
+
+func TestManagerOpensReadAndWritePoolsLazily(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "lazy.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TABLE t (id INTEGER PRIMARY KEY)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	var readOpens, writeOpens, readCloses, writeCloses atomic.Int64
+	m := NewManager(Config{
+		OnReadOpen: func(_, _ string, _ *sql.DB) error {
+			readOpens.Add(1)
+			return nil
+		},
+		OnWriteOpen: func(_, _ string, _ *sql.DB) error {
+			writeOpens.Add(1)
+			return nil
+		},
+		OnReadClose: func(_, _ string, _ *sql.DB) {
+			readCloses.Add(1)
+		},
+		OnWriteClose: func(_, _ string, _ *sql.DB) {
+			writeCloses.Add(1)
+		},
+	})
+	if err := m.WithRead("read-only", path, func(db *sql.DB) error {
+		var count int
+		return db.QueryRow(`SELECT COUNT(*) FROM t`).Scan(&count)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if readOpens.Load() != 1 || writeOpens.Load() != 0 {
+		t.Fatalf("read opened read=%d write=%d pools", readOpens.Load(), writeOpens.Load())
+	}
+	if err := m.CloseHandle("read-only"); err != nil {
+		t.Fatal(err)
+	}
+	if readCloses.Load() != 1 || writeCloses.Load() != 0 {
+		t.Fatalf("read closed read=%d write=%d pools", readCloses.Load(), writeCloses.Load())
+	}
+
+	if err := m.WithWrite("write-only", path, func(db *sql.DB) error {
+		_, err := db.Exec(`INSERT INTO t DEFAULT VALUES`)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if readOpens.Load() != 1 || writeOpens.Load() != 1 {
+		t.Fatalf("write opened read=%d write=%d pools", readOpens.Load(), writeOpens.Load())
+	}
+	if err := m.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if readCloses.Load() != 1 || writeCloses.Load() != 1 {
+		t.Fatalf("close counts read=%d write=%d", readCloses.Load(), writeCloses.Load())
 	}
 }
 

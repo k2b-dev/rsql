@@ -15,6 +15,8 @@ func TestLoadAndValidate(t *testing.T) {
 	v.Set("log-level", "INFO")
 	v.Set("query-timeout-ms", 2500)
 	v.Set("namespace-idle-timeout-ms", 60000)
+	v.Set("max-open-namespaces", 256)
+	v.Set("namespace-read-connections", 4)
 	v.Set("read-timeout-ms", 11000)
 	v.Set("write-timeout-ms", 12000)
 	v.Set("idle-timeout-ms", 13000)
@@ -33,6 +35,12 @@ func TestLoadAndValidate(t *testing.T) {
 	}
 	if cfg.QueryTimeout != 2500*time.Millisecond {
 		t.Fatalf("unexpected query timeout: %v", cfg.QueryTimeout)
+	}
+	if cfg.MaxOpenNamespaces != 256 {
+		t.Fatalf("unexpected max open namespaces: %d", cfg.MaxOpenNamespaces)
+	}
+	if cfg.NamespaceReadConns != 4 {
+		t.Fatalf("unexpected namespace read connections: %d", cfg.NamespaceReadConns)
 	}
 	if !cfg.PprofEnabled {
 		t.Fatal("expected pprof to be enabled")
@@ -54,10 +62,28 @@ func TestLoadRejectsNegativeDurations(t *testing.T) {
 	}
 }
 
+func TestLoadNamespaceLimitsFromEnv(t *testing.T) {
+	t.Setenv("RSQL_MAX_OPEN_NAMESPACES", "512")
+	t.Setenv("RSQL_NAMESPACE_READ_CONNECTIONS", "3")
+	v := NewViper()
+	InitEnv(v)
+
+	cfg, err := Load(v)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if cfg.MaxOpenNamespaces != 512 {
+		t.Fatalf("unexpected max open namespaces: %d", cfg.MaxOpenNamespaces)
+	}
+	if cfg.NamespaceReadConns != 3 {
+		t.Fatalf("unexpected namespace read connections: %d", cfg.NamespaceReadConns)
+	}
+}
+
 func TestValidateRejectsMissingToken(t *testing.T) {
 	cfg := Config{
-		Listen:            ":8080",
-		DataDir:           "data",
+		Listen:  ":8080",
+		DataDir: "data",
 	}
 
 	if err := cfg.Validate(); err == nil {
@@ -67,6 +93,8 @@ func TestValidateRejectsMissingToken(t *testing.T) {
 
 func TestValidateRejectsOtherInvalidFields(t *testing.T) {
 	tests := []Config{
+		{Listen: ":8080", DataDir: "data", APIToken: "secret", MaxOpenNamespaces: 0, NamespaceReadConns: 1},
+		{Listen: ":8080", DataDir: "data", APIToken: "secret", MaxOpenNamespaces: 1, NamespaceReadConns: 0},
 	}
 	for i, cfg := range tests {
 		if err := cfg.Validate(); err == nil {
@@ -96,7 +124,13 @@ func TestLoadNegativeOtherDurations(t *testing.T) {
 }
 
 func TestRedactedHidesToken(t *testing.T) {
-	cfg := Config{APIToken: "super-secret", PprofEnabled: true, PprofListen: "127.0.0.1:6060"}
+	cfg := Config{
+		APIToken:           "super-secret",
+		PprofEnabled:       true,
+		PprofListen:        "127.0.0.1:6060",
+		MaxOpenNamespaces:  256,
+		NamespaceReadConns: 4,
+	}
 	redacted := cfg.Redacted()
 
 	if redacted["api_token"] != "***redacted***" {
@@ -104,5 +138,11 @@ func TestRedactedHidesToken(t *testing.T) {
 	}
 	if redacted["pprof_enabled"] != true {
 		t.Fatalf("expected pprof enabled in redacted output, got %v", redacted["pprof_enabled"])
+	}
+	if redacted["max_open_namespaces"] != 256 {
+		t.Fatalf("expected max open namespaces in output, got %v", redacted["max_open_namespaces"])
+	}
+	if redacted["namespace_read_connections"] != 4 {
+		t.Fatalf("expected namespace read connections in output, got %v", redacted["namespace_read_connections"])
 	}
 }

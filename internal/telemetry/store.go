@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -178,6 +179,39 @@ func (s *store) latest() (map[string]Bucket, error) {
 		var bucket Bucket
 		if err := json.Unmarshal([]byte(payload), &bucket); err != nil {
 			return nil, fmt.Errorf("decode latest telemetry: %w", err)
+		}
+		out[namespace] = bucket
+	}
+	return out, rows.Err()
+}
+
+func (s *store) latestFor(namespaces []string) (map[string]Bucket, error) {
+	if len(namespaces) == 0 {
+		return map[string]Bucket{}, nil
+	}
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(namespaces)), ",")
+	args := make([]any, len(namespaces))
+	for index, namespace := range namespaces {
+		args[index] = namespace
+	}
+	rows, err := s.db.Query(
+		`SELECT namespace, payload_json FROM telemetry_latest WHERE namespace IN (`+placeholders+`)`,
+		args...,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query latest telemetry page: %w", err)
+	}
+	defer rows.Close()
+
+	out := make(map[string]Bucket, len(namespaces))
+	for rows.Next() {
+		var namespace, payload string
+		if err := rows.Scan(&namespace, &payload); err != nil {
+			return nil, fmt.Errorf("scan latest telemetry page: %w", err)
+		}
+		var bucket Bucket
+		if err := json.Unmarshal([]byte(payload), &bucket); err != nil {
+			return nil, fmt.Errorf("decode latest telemetry page: %w", err)
 		}
 		out[namespace] = bucket
 	}

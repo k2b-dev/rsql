@@ -182,7 +182,7 @@ func TestServiceNewError(t *testing.T) {
 	if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
 		t.Fatalf("write file: %v", err)
 	}
-	if _, err := New(file, 0); err == nil {
+	if _, err := New(file, 0, 128, 1); err == nil {
 		t.Fatal("expected new service error")
 	}
 }

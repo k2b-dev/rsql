@@ -34,11 +34,50 @@ func (n NamespaceAdmin) Create(ctx context.Context, definition NamespaceDefiniti
 	return result, err
 }
 
-// List returns all active namespaces without opening their database files.
-func (n NamespaceAdmin) List(ctx context.Context) ([]NamespaceRecord, error) {
-	var result []NamespaceRecord
-	err := n.client.doJSON(ctx, http.MethodGet, "/v1/namespaces", nil, nil, nil, &result)
+// List returns one bounded page of active namespaces.
+func (n NamespaceAdmin) List(ctx context.Context, options ...NamespaceListOptions) (NamespacePage, error) {
+	if len(options) > 1 {
+		return NamespacePage{}, fmt.Errorf("at most one namespace list options value is allowed")
+	}
+	var option NamespaceListOptions
+	if len(options) == 1 {
+		option = options[0]
+	}
+	if option.Limit < 0 || option.Limit > 500 {
+		return NamespacePage{}, fmt.Errorf("namespace list limit must be between 1 and 500")
+	}
+	if option.Cursor != "" {
+		if err := validateNamespace(option.Cursor); err != nil {
+			return NamespacePage{}, fmt.Errorf("invalid namespace cursor: %w", err)
+		}
+	}
+	query := make(url.Values)
+	if option.Limit > 0 {
+		query.Set("limit", fmt.Sprintf("%d", option.Limit))
+	}
+	if option.Cursor != "" {
+		query.Set("cursor", option.Cursor)
+	}
+	var result NamespacePage
+	err := n.client.doJSON(ctx, http.MethodGet, "/v1/namespaces", query, nil, nil, &result)
 	return result, err
+}
+
+// ListAll returns every active namespace by consuming all server pages.
+func (n NamespaceAdmin) ListAll(ctx context.Context) ([]NamespaceRecord, error) {
+	var records []NamespaceRecord
+	cursor := ""
+	for {
+		page, err := n.List(ctx, NamespaceListOptions{Limit: 500, Cursor: cursor})
+		if err != nil {
+			return nil, err
+		}
+		records = append(records, page.Data...)
+		if page.NextCursor == "" {
+			return records, nil
+		}
+		cursor = page.NextCursor
+	}
 }
 
 // Get returns one namespace record and its config.

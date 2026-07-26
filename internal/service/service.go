@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -25,6 +24,17 @@ import (
 
 var namespaceNameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$`)
 
+const (
+	DefaultNamespacePageSize = 100
+	MaxNamespacePageSize     = 500
+)
+
+// NamespacePage is one bounded page of namespace control-plane records.
+type NamespacePage struct {
+	Data       []map[string]any `json:"data"`
+	NextCursor string           `json:"next_cursor,omitempty"`
+}
+
 // Service orchestrates all rsql operations.
 type Service struct {
 	dataDir   string
@@ -35,7 +45,7 @@ type Service struct {
 }
 
 // New creates a service instance.
-func New(dataDir string, idleTimeout time.Duration) (*Service, error) {
+func New(dataDir string, idleTimeout time.Duration, maxOpenNamespaces, namespaceReadConns int) (*Service, error) {
 	reg, err := control.Open(dataDir)
 	if err != nil {
 		return nil, err
@@ -53,145 +63,68 @@ func New(dataDir string, idleTimeout time.Duration) (*Service, error) {
 	}
 	s.ns = namespace.NewManager(namespace.Config{
 		IdleTimeout: idleTimeout,
-		OnOpen:      configureNamespacePools,
+		MaxRetained: maxOpenNamespaces,
+		ReadConns:   namespaceReadConns,
+		BeforeOpen:  s.beforeNamespaceOpen,
+		OnReadOpen: func(_ string, path string, db *sql.DB) error {
+			sqlite.RegisterNamespacePool(path, db)
+			return nil
+		},
+		OnWriteOpen: func(name, path string, db *sql.DB) error {
+			sqlite.RegisterNamespacePool(path, db)
+			return configureNamespaceWrite(name, db)
+		},
+		OnReadClose: func(_, _ string, db *sql.DB) {
+			sqlite.UnregisterNamespacePool(db)
+		},
+		OnWriteClose: func(_, _ string, db *sql.DB) {
+			sqlite.UnregisterNamespacePool(db)
+		},
 		OnWriteWait: collector.RecordWriteWait,
 	})
-	s.reconcile(slog.Default())
 	return s, nil
 }
 
 func defaultNamespaceConfig() domain.NamespaceConfig {
 	return domain.NamespaceConfig{
 		JournalMode:  "wal",
+		Synchronous:  "full",
 		BusyTimeout:  5000,
 		QueryTimeout: 10000,
 		ForeignKeys:  domain.BoolPtr(true),
 	}
 }
 
-func configureNamespacePools(_ string, _ *sql.DB, writeDB *sql.DB) error {
-	if err := sqlite.EnsureInternalSchema(writeDB); err != nil {
+func normalizeNamespaceConfig(cfg domain.NamespaceConfig) (domain.NamespaceConfig, error) {
+	cfg.Synchronous = strings.ToLower(cfg.Synchronous)
+	if cfg.Synchronous == "" {
+		cfg.Synchronous = "full"
+	}
+	if cfg.Synchronous != "full" && cfg.Synchronous != "normal" {
+		return domain.NamespaceConfig{}, domain.NewError(
+			domain.ErrInvalidRequest,
+			400,
+			"synchronous must be full or normal",
+		)
+	}
+	return cfg, nil
+}
+
+func configureNamespaceWrite(_ string, db *sql.DB) error {
+	if err := sqlite.EnsureInternalSchema(db); err != nil {
 		return err
 	}
 	cfg := defaultNamespaceConfig()
-	ok, err := sqlite.GetMeta(writeDB, "namespace_config", "self", &cfg)
+	ok, err := sqlite.GetMeta(db, "namespace_config", "self", &cfg)
 	if err != nil {
 		return err
 	}
 	if !ok {
-		if err := sqlite.PutMeta(writeDB, "namespace_config", "self", cfg); err != nil {
+		if err := sqlite.PutMeta(db, "namespace_config", "self", cfg); err != nil {
 			return err
 		}
 	}
-	return sqlite.ApplyNamespaceConfig(writeDB, cfg)
-}
-
-// reconcile resolves the two known crash-window inconsistencies between the
-// registry and the on-disk state, plus stale export artifacts. Called once
-// on startup. Failures are logged but never block the boot — a single
-// broken namespace must not prevent the rest of the server from coming up.
-//
-// Steps:
-//
-//  1. Purge data/exports/* — those files only exist in-flight. Anything
-//     left over after a clean boot is by definition stale.
-//  2. For every active registry row:
-//     - file missing → soft-delete the registry row (closes the
-//     "crash mid-DELETE" window where os.Remove succeeded but
-//     registry.Delete didn't).
-//     - file exists → re-run EnsureInternalSchema and reapply the stored
-//     NamespaceConfig. Both are idempotent so a healthy namespace is
-//     a no-op; a partial-CREATE namespace is healed.
-//  3. Surface any *.db file under data/namespaces that has no registry
-//     entry as an INFO log line. Do not delete — could be an intentional
-//     backup copy or a hand-restored database.
-func (s *Service) reconcile(logger *slog.Logger) {
-	if logger == nil {
-		logger = slog.Default()
-	}
-
-	// 1. Stale exports.
-	exportDir := filepath.Join(s.dataDir, "exports")
-	if err := os.RemoveAll(exportDir); err != nil {
-		logger.Warn("reconcile: purge exports failed", "dir", exportDir, "error", err)
-	}
-
-	// 2. Walk the registry.
-	recs, err := s.registry.List()
-	if err != nil {
-		logger.Error("reconcile: list registry failed", "error", err)
-		return
-	}
-	registered := make(map[string]struct{}, len(recs))
-	for _, rec := range recs {
-		registered[filepath.Base(rec.DBPath)] = struct{}{}
-
-		if _, statErr := os.Stat(rec.DBPath); errors.Is(statErr, os.ErrNotExist) {
-			logger.Warn("reconcile: registry row references missing file, soft-deleting",
-				"namespace", rec.Name, "path", rec.DBPath)
-			if delErr := s.registry.Delete(rec.Name); delErr != nil {
-				logger.Error("reconcile: soft-delete failed",
-					"namespace", rec.Name, "error", delErr)
-			}
-			continue
-		}
-
-		// File exists — heal idempotently.
-		healErr := s.ns.WithWrite(rec.Name, rec.DBPath, func(db *sql.DB) error {
-			if err := sqlite.EnsureInternalSchema(db); err != nil {
-				return err
-			}
-			var cfg domain.NamespaceConfig
-			ok, err := sqlite.GetMeta(db, "namespace_config", "self", &cfg)
-			if err != nil {
-				return err
-			}
-			if !ok {
-				cfg = domain.NamespaceConfig{
-					JournalMode:  "wal",
-					BusyTimeout:  5000,
-					QueryTimeout: 10000,
-					ForeignKeys:  domain.BoolPtr(true),
-				}
-				if err := sqlite.PutMeta(db, "namespace_config", "self", cfg); err != nil {
-					return err
-				}
-			}
-			return sqlite.ApplyNamespaceConfig(db, cfg)
-		})
-		if healErr != nil {
-			logger.Warn("reconcile: heal failed (namespace remains in registry)",
-				"namespace", rec.Name, "error", healErr)
-		}
-		_ = s.ns.CloseHandle(rec.Name)
-	}
-
-	// 3. Orphan-file scan.
-	nsDir := filepath.Join(s.dataDir, "namespaces")
-	entries, err := os.ReadDir(nsDir)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		logger.Warn("reconcile: read namespaces dir failed", "dir", nsDir, "error", err)
-		return
-	}
-	for _, e := range entries {
-		if e.IsDir() {
-			continue
-		}
-		name := e.Name()
-		if !strings.HasSuffix(name, ".db") {
-			continue
-		}
-		if _, ok := registered[name]; ok {
-			continue
-		}
-		// SQLite WAL/SHM sidecars are tied to the main DB and not
-		// independently meaningful — silently skip.
-		if strings.HasSuffix(name, "-wal") || strings.HasSuffix(name, "-shm") {
-			continue
-		}
-		logger.Info("reconcile: orphan namespace file (no registry row)",
-			"path", filepath.Join(nsDir, name))
-	}
+	return sqlite.ApplyNamespaceConfig(db, cfg)
 }
 
 // Close closes all service resources.
@@ -209,6 +142,20 @@ func (s *Service) Close() error {
 	return errors.Join(errs...)
 }
 
+func (s *Service) beforeNamespaceOpen(name, path string) error {
+	if _, err := os.Stat(path); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return domain.NewError(
+				domain.ErrNamespaceNotFound,
+				404,
+				fmt.Sprintf("Namespace '%s' does not exist", name),
+			)
+		}
+		return fmt.Errorf("stat namespace database: %w", err)
+	}
+	return nil
+}
+
 func validateNamespaceName(name string) error {
 	if !namespaceNameRe.MatchString(name) {
 		return fmt.Errorf("invalid namespace name %q", name)
@@ -221,15 +168,33 @@ func (s *Service) CreateNamespace(req domain.NamespaceDefinition) (map[string]an
 	if err := validateNamespaceName(req.Name); err != nil {
 		return nil, domain.NewError(domain.ErrInvalidRequest, 400, err.Error())
 	}
+	var err error
+	req.Config, err = normalizeNamespaceConfig(req.Config)
+	if err != nil {
+		return nil, err
+	}
 	path := control.PathFor(s.dataDir, req.Name)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return nil, domain.WrapError(domain.ErrInternal, 500, "failed to create namespace directory", err)
+	}
 	if err := s.registry.Create(req.Name, path); err != nil {
 		if errors.Is(err, control.ErrAlreadyExists) {
 			return nil, domain.WrapError(domain.ErrConflict, 409, "namespace already exists", err)
 		}
 		return nil, domain.WrapError(domain.ErrInternal, 500, "failed to create namespace record", err)
 	}
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		_ = s.registry.Delete(req.Name)
+		return nil, domain.WrapError(domain.ErrInternal, 500, "failed to create namespace database", err)
+	}
+	if err := file.Close(); err != nil {
+		_ = os.Remove(path)
+		_ = s.registry.Delete(req.Name)
+		return nil, domain.WrapError(domain.ErrInternal, 500, "failed to close namespace database", err)
+	}
 
-	err := s.ns.WithWrite(req.Name, path, func(db *sql.DB) error {
+	err = s.ns.WithWrite(req.Name, path, func(db *sql.DB) error {
 		if err := sqlite.EnsureInternalSchema(db); err != nil {
 			return err
 		}
@@ -254,15 +219,34 @@ func (s *Service) CreateNamespace(req domain.NamespaceDefinition) (map[string]an
 	return map[string]any{"name": req.Name, "config": req.Config}, nil
 }
 
-// ListNamespaces lists all active namespaces.
-func (s *Service) ListNamespaces() ([]map[string]any, error) {
-	recs, err := s.registry.List()
-	if err != nil {
-		return nil, domain.WrapError(domain.ErrInternal, 500, "failed to list namespaces", err)
+// ListNamespaces lists one page of active namespaces.
+func (s *Service) ListNamespaces(limit int, cursor string) (NamespacePage, error) {
+	if limit == 0 {
+		limit = DefaultNamespacePageSize
 	}
-	latest, err := s.telemetry.Latest()
+	if limit < 1 || limit > MaxNamespacePageSize {
+		return NamespacePage{}, domain.NewError(
+			domain.ErrInvalidRequest,
+			400,
+			fmt.Sprintf("limit must be between 1 and %d", MaxNamespacePageSize),
+		)
+	}
+	if cursor != "" {
+		if err := validateNamespaceName(cursor); err != nil {
+			return NamespacePage{}, domain.NewError(domain.ErrInvalidRequest, 400, "invalid namespace cursor")
+		}
+	}
+	recs, nextCursor, err := s.registry.ListPage(limit, cursor)
 	if err != nil {
-		return nil, domain.WrapError(domain.ErrInternal, 500, "failed to read namespace activity", err)
+		return NamespacePage{}, domain.WrapError(domain.ErrInternal, 500, "failed to list namespaces", err)
+	}
+	names := make([]string, len(recs))
+	for index, record := range recs {
+		names[index] = record.Name
+	}
+	latest, err := s.telemetry.LatestFor(names)
+	if err != nil {
+		return NamespacePage{}, domain.WrapError(domain.ErrInternal, 500, "failed to read namespace activity", err)
 	}
 	out := make([]map[string]any, 0, len(recs))
 	for _, r := range recs {
@@ -280,7 +264,7 @@ func (s *Service) ListNamespaces() ([]map[string]any, error) {
 		}
 		out = append(out, item)
 	}
-	return out, nil
+	return NamespacePage{Data: out, NextCursor: nextCursor}, nil
 }
 
 // GetNamespace returns namespace info.
@@ -301,6 +285,11 @@ func (s *Service) GetNamespace(name string) (map[string]any, error) {
 
 // UpdateNamespaceConfig updates and applies namespace config.
 func (s *Service) UpdateNamespaceConfig(name string, cfg domain.NamespaceConfig) (map[string]any, error) {
+	var err error
+	cfg, err = normalizeNamespaceConfig(cfg)
+	if err != nil {
+		return nil, err
+	}
 	rec, err := s.registry.Get(name)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -346,10 +335,9 @@ func (s *Service) DeleteNamespace(name string) error {
 		return domain.WrapError(domain.ErrInternal, 500, "failed to remove namespace database", err)
 	}
 	if err := s.registry.Delete(name); err != nil {
-		if err == sql.ErrNoRows {
-			return domain.NewError(domain.ErrNamespaceNotFound, 404, fmt.Sprintf("Namespace '%s' does not exist", name))
+		if err != sql.ErrNoRows {
+			return domain.WrapError(domain.ErrInternal, 500, "failed to delete namespace", err)
 		}
-		return domain.WrapError(domain.ErrInternal, 500, "failed to delete namespace", err)
 	}
 	_ = s.telemetry.Purge(name)
 	return nil
@@ -368,6 +356,9 @@ func (s *Service) DuplicateNamespace(source, target string) (map[string]any, err
 		return nil, domain.WrapError(domain.ErrInternal, 500, "failed to load source namespace", err)
 	}
 	targetPath := control.PathFor(s.dataDir, target)
+	if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
+		return nil, domain.WrapError(domain.ErrInternal, 500, "failed to create target namespace directory", err)
+	}
 	if err := s.registry.Create(target, targetPath); err != nil {
 		return nil, domain.WrapError(domain.ErrConflict, 409, "target namespace already exists", err)
 	}
@@ -546,17 +537,20 @@ func (s *Service) ImportNamespaceCSV(name, table string, src io.Reader, meta jso
 
 	var inserted int
 	var ids []any
+	includeIDs := s.broker.Count(name) > 0
 	err = s.ns.WithWrite(name, rec.DBPath, func(db *sql.DB) error {
 		if err := sqlite.EnsureInternalSchema(db); err != nil {
 			return err
 		}
-		insertedRows, insertedIDs, err := sqlite.InsertRows(db, table, rows, "")
+		result, err := sqlite.InsertRowsWithOptions(db, table, rows, sqlite.InsertOptions{
+			IncludeIDs: includeIDs,
+		})
 		if err != nil {
 			return err
 		}
-		inserted = len(insertedRows)
-		if len(insertedIDs) > 0 {
-			ids = append([]any(nil), insertedIDs...)
+		inserted = result.Affected
+		if len(result.IDs) > 0 {
+			ids = append([]any(nil), result.IDs...)
 		}
 		return nil
 	})
@@ -592,14 +586,10 @@ func (s *Service) TablesList(ns string) ([]map[string]any, error) {
 }
 
 func (s *Service) pathForNamespace(name string) (string, error) {
-	rec, err := s.registry.Get(name)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return "", domain.NewError(domain.ErrNamespaceNotFound, 404, fmt.Sprintf("Namespace '%s' does not exist", name))
-		}
-		return "", domain.WrapError(domain.ErrInternal, 500, "failed to resolve namespace", err)
+	if err := validateNamespaceName(name); err != nil {
+		return "", domain.NewError(domain.ErrInvalidRequest, 400, err.Error())
 	}
-	return rec.DBPath, nil
+	return control.PathFor(s.dataDir, name), nil
 }
 
 func (s *Service) GetNamespaceConfig(name string) (domain.NamespaceConfig, error) {
@@ -608,7 +598,7 @@ func (s *Service) GetNamespaceConfig(name string) (domain.NamespaceConfig, error
 		return domain.NamespaceConfig{}, err
 	}
 
-	var cfg domain.NamespaceConfig
+	cfg := defaultNamespaceConfig()
 	err = s.ns.WithRead(name, path, func(db *sql.DB) error {
 		ok, err := sqlite.GetMeta(db, "namespace_config", "self", &cfg)
 		if err != nil {
@@ -839,18 +829,25 @@ func (s *Service) InsertRows(ns, table string, rows []map[string]any, prefer str
 	if err != nil {
 		return nil, err
 	}
+	hasSubscribers := s.broker.Count(ns) > 0
 	var out []map[string]any
 	var ids []any
+	var inserted int
 	err = s.ns.WithWrite(ns, path, func(db *sql.DB) error {
 		if err := assertWritableTable(db, table, "insert into"); err != nil {
 			return err
 		}
-		inserted, insertedIDs, err := sqlite.InsertRows(db, table, rows, prefer)
+		result, err := sqlite.InsertRowsWithOptions(db, table, rows, sqlite.InsertOptions{
+			Resolution:  prefer,
+			IncludeRows: prefer == "return=representation" || (hasSubscribers && len(rows) == 1),
+			IncludeIDs:  hasSubscribers && len(rows) > 1,
+		})
 		if err != nil {
 			return err
 		}
-		out = inserted
-		ids = insertedIDs
+		out = result.Rows
+		ids = result.IDs
+		inserted = result.Affected
 		return nil
 	})
 	if err != nil {
@@ -866,7 +863,7 @@ func (s *Service) InsertRows(ns, table string, rows []map[string]any, prefer str
 	if prefer == "return=representation" {
 		return map[string]any{"data": out}, nil
 	}
-	return map[string]any{"inserted": len(out)}, nil
+	return map[string]any{"inserted": inserted}, nil
 }
 
 // UpdateRow updates one row.
@@ -875,13 +872,30 @@ func (s *Service) UpdateRow(ns, table string, id any, payload map[string]any, pr
 	if err != nil {
 		return nil, err
 	}
+	hasSubscribers := s.broker.Count(ns) > 0
 	var rows []map[string]any
 	err = s.ns.WithWrite(ns, path, func(db *sql.DB) error {
 		if err := assertWritableTable(db, table, "update"); err != nil {
 			return err
 		}
-		rows, err = sqlite.UpdateRowByID(db, table, id, payload, prefer)
-		return err
+		result, err := sqlite.UpdateRowsWithOptions(
+			db,
+			table,
+			payload,
+			`id = ?`,
+			[]any{id},
+			sqlite.MutationOptions{
+				IncludeRows: prefer == "return=representation" || hasSubscribers,
+			},
+		)
+		if err != nil {
+			return err
+		}
+		if result.Affected == 0 {
+			return sql.ErrNoRows
+		}
+		rows = result.Rows
+		return nil
 	})
 	if err != nil {
 		return nil, mapErr(err)
@@ -902,13 +916,29 @@ func (s *Service) DeleteRow(ns, table string, id any, prefer string, meta json.R
 	if err != nil {
 		return nil, err
 	}
+	hasSubscribers := s.broker.Count(ns) > 0
 	var rows []map[string]any
 	err = s.ns.WithWrite(ns, path, func(db *sql.DB) error {
 		if err := assertWritableTable(db, table, "delete from"); err != nil {
 			return err
 		}
-		rows, err = sqlite.DeleteRowByID(db, table, id, prefer)
-		return err
+		result, err := sqlite.DeleteRowsWithOptions(
+			db,
+			table,
+			`id = ?`,
+			[]any{id},
+			sqlite.MutationOptions{
+				IncludeRows: prefer == "return=representation" || hasSubscribers,
+			},
+		)
+		if err != nil {
+			return err
+		}
+		if result.Affected == 0 {
+			return sql.ErrNoRows
+		}
+		rows = result.Rows
+		return nil
 	})
 	if err != nil {
 		return nil, mapErr(err)
@@ -937,12 +967,30 @@ func (s *Service) BulkUpdate(ns, table string, query map[string][]string, payloa
 
 	var ids []any
 	var rows []map[string]any
+	var updated int
+	hasSubscribers := s.broker.Count(ns) > 0
 	err = s.ns.WithWrite(ns, path, func(db *sql.DB) error {
 		if err := assertWritableTable(db, table, "update"); err != nil {
 			return err
 		}
-		ids, rows, err = sqlite.BulkUpdateRows(db, table, payload, where, args, prefer)
-		return err
+		result, err := sqlite.UpdateRowsWithOptions(
+			db,
+			table,
+			payload,
+			where,
+			args,
+			sqlite.MutationOptions{
+				IncludeRows: prefer == "return=representation",
+				IncludeIDs:  hasSubscribers,
+			},
+		)
+		if err != nil {
+			return err
+		}
+		ids = result.IDs
+		rows = result.Rows
+		updated = result.Affected
+		return nil
 	})
 	if err != nil {
 		return nil, mapErr(err)
@@ -953,7 +1001,7 @@ func (s *Service) BulkUpdate(ns, table string, query map[string][]string, payloa
 	if prefer == "return=representation" {
 		return map[string]any{"data": rows}, nil
 	}
-	return map[string]any{"updated": len(ids)}, nil
+	return map[string]any{"updated": updated}, nil
 }
 
 // BulkDelete deletes rows by filter.
@@ -970,12 +1018,29 @@ func (s *Service) BulkDelete(ns, table string, query map[string][]string, prefer
 
 	var ids []any
 	var rows []map[string]any
+	var deleted int
+	hasSubscribers := s.broker.Count(ns) > 0
 	err = s.ns.WithWrite(ns, path, func(db *sql.DB) error {
 		if err := assertWritableTable(db, table, "delete from"); err != nil {
 			return err
 		}
-		ids, rows, err = sqlite.BulkDeleteRows(db, table, where, args, prefer)
-		return err
+		result, err := sqlite.DeleteRowsWithOptions(
+			db,
+			table,
+			where,
+			args,
+			sqlite.MutationOptions{
+				IncludeRows: prefer == "return=representation",
+				IncludeIDs:  hasSubscribers,
+			},
+		)
+		if err != nil {
+			return err
+		}
+		ids = result.IDs
+		rows = result.Rows
+		deleted = result.Affected
+		return nil
 	})
 	if err != nil {
 		return nil, mapErr(err)
@@ -986,7 +1051,7 @@ func (s *Service) BulkDelete(ns, table string, query map[string][]string, prefer
 	if prefer == "return=representation" {
 		return map[string]any{"data": rows}, nil
 	}
-	return map[string]any{"deleted": len(ids)}, nil
+	return map[string]any{"deleted": deleted}, nil
 }
 
 // Query executes read-only SQL statements.
@@ -1036,8 +1101,19 @@ func (s *Service) Changelog(ns, table string, limit, offset int) ([]sqlite.Chang
 
 // Subscribe registers SSE subscriptions.
 func (s *Service) Subscribe(ns string, tables []string) (uint64, <-chan domain.SSEEvent, error) {
-	if _, err := s.pathForNamespace(ns); err != nil {
+	path, err := s.pathForNamespace(ns)
+	if err != nil {
 		return 0, nil, err
+	}
+	if _, err := os.Stat(path); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return 0, nil, domain.NewError(
+				domain.ErrNamespaceNotFound,
+				404,
+				fmt.Sprintf("Namespace '%s' does not exist", ns),
+			)
+		}
+		return 0, nil, domain.WrapError(domain.ErrInternal, 500, "failed to stat namespace", err)
 	}
 	id, ch := s.broker.Subscribe(ns, tables)
 	return id, ch, nil
@@ -1049,6 +1125,9 @@ func (s *Service) Unsubscribe(ns string, id uint64) {
 }
 
 func (s *Service) publishRow(ns, table, action string, row map[string]any, meta json.RawMessage) {
+	if s.broker.Count(ns) == 0 {
+		return
+	}
 	ev := domain.SSEEvent{
 		Namespace: ns,
 		Table:     table,
@@ -1062,6 +1141,9 @@ func (s *Service) publishRow(ns, table, action string, row map[string]any, meta 
 }
 
 func (s *Service) publishBulk(ns, table, action string, ids []any, meta json.RawMessage) {
+	if s.broker.Count(ns) == 0 {
+		return
+	}
 	ev := domain.SSEEvent{
 		Namespace: ns,
 		Table:     table,
@@ -1076,6 +1158,9 @@ func (s *Service) publishBulk(ns, table, action string, ids []any, meta json.Raw
 }
 
 func (s *Service) publishSchema(ns, table string, detail map[string]any, meta json.RawMessage) {
+	if s.broker.Count(ns) == 0 {
+		return
+	}
 	ev := domain.SSEEvent{
 		Namespace: ns,
 		Table:     table,
@@ -1093,20 +1178,16 @@ func (s *Service) publishViewInvalidations(ns, sourceTable, sourceAction string)
 		return
 	}
 	_ = s.ns.WithRead(ns, path, func(db *sql.DB) error {
-		tables, err := sqlite.ListTables(db)
+		views, err := sqlite.ListViewSources(db)
 		if err != nil {
 			return err
 		}
-		for _, t := range tables {
-			if t["type"] != "view" {
-				continue
-			}
-			sources, _ := t["source_tables"].([]string)
-			for _, st := range sources {
+		for _, view := range views {
+			for _, st := range view.Tables {
 				if st == sourceTable {
 					s.broker.Publish(ns, domain.SSEEvent{
 						Namespace:    ns,
-						Table:        t["name"].(string),
+						Table:        view.Name,
 						Action:       "source_changed",
 						SourceTable:  sourceTable,
 						SourceAction: sourceAction,

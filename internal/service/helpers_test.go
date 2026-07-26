@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/k2b-dev/rsql/internal/domain"
+	"github.com/k2b-dev/rsql/internal/store/control"
 )
 
 func TestServiceHelpersAndMapErr(t *testing.T) {
@@ -18,7 +19,7 @@ func TestServiceHelpersAndMapErr(t *testing.T) {
 	}
 
 	path, err := svc.BuildImportPath("ws")
-	if err != nil || !strings.HasSuffix(path, "ws.db") {
+	if err != nil || !strings.HasSuffix(path, ".db") || path != control.PathFor(svc.dataDir, "ws") {
 		t.Fatalf("build import path: path=%s err=%v", path, err)
 	}
 	if _, err := svc.BuildImportPath("bad space"); err == nil {

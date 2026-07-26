@@ -27,6 +27,12 @@ var reservedColumnNames = map[string]struct{}{
 	"_meta":      {},
 }
 
+// ViewSource describes the tables referenced by one SQLite view.
+type ViewSource struct {
+	Name   string
+	Tables []string
+}
+
 // validateColumnName enforces the column-naming contract on user input:
 // it must pass the SQL identifier regex, must not start with `_` (reserved
 // for rsql-managed columns and internal tables), and must not be one of the
@@ -69,42 +75,88 @@ func ListTables(db *sql.DB) ([]map[string]any, error) {
 	if err != nil {
 		return nil, fmt.Errorf("list sqlite_master: %w", err)
 	}
-	defer rows.Close()
 
-	var out []map[string]any
+	var entries []struct {
+		name    string
+		typ     string
+		sqlText sql.NullString
+	}
 	for rows.Next() {
-		var name, typ string
-		var sqlText sql.NullString
-		if err := rows.Scan(&name, &typ, &sqlText); err != nil {
+		var entry struct {
+			name    string
+			typ     string
+			sqlText sql.NullString
+		}
+		if err := rows.Scan(&entry.name, &entry.typ, &entry.sqlText); err != nil {
+			rows.Close()
 			return nil, fmt.Errorf("scan sqlite_master row: %w", err)
 		}
-		entry := map[string]any{"name": name, "type": typ}
-
-		countCols, err := columnCount(db, name)
-		if err != nil {
-			return nil, err
-		}
-		entry["column_count"] = countCols
-
-		if typ == "table" {
-			rowCount, err := countRows(db, name)
-			if err != nil {
-				return nil, err
-			}
-			entry["row_count"] = rowCount
-		} else {
-			if sqlText.Valid {
-				entry["sql"] = sqlText.String
-				entry["source_tables"] = extractSourceTables(sqlText.String)
-			}
-		}
-		out = append(out, entry)
+		entries = append(entries, entry)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, fmt.Errorf("close sqlite_master rows: %w", err)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate sqlite_master rows: %w", err)
 	}
 
+	out := make([]map[string]any, 0, len(entries))
+	for _, source := range entries {
+		entry := map[string]any{"name": source.name, "type": source.typ}
+
+		countCols, err := columnCount(db, source.name)
+		if err != nil {
+			return nil, err
+		}
+		entry["column_count"] = countCols
+
+		if source.typ == "table" {
+			rowCount, err := countRows(db, source.name)
+			if err != nil {
+				return nil, err
+			}
+			entry["row_count"] = rowCount
+		} else {
+			if source.sqlText.Valid {
+				entry["sql"] = source.sqlText.String
+				entry["source_tables"] = extractSourceTables(source.sqlText.String)
+			}
+		}
+		out = append(out, entry)
+	}
+
 	return out, nil
+}
+
+// ListViewSources reads only view dependency metadata from sqlite_master.
+func ListViewSources(db *sql.DB) ([]ViewSource, error) {
+	rows, err := db.Query(`
+		SELECT name, sql
+		FROM sqlite_master
+		WHERE type = 'view' AND name NOT GLOB '_*'
+		ORDER BY name
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("list view sources: %w", err)
+	}
+	defer rows.Close()
+
+	var views []ViewSource
+	for rows.Next() {
+		var name string
+		var sqlText sql.NullString
+		if err := rows.Scan(&name, &sqlText); err != nil {
+			return nil, fmt.Errorf("scan view source: %w", err)
+		}
+		if !sqlText.Valid {
+			continue
+		}
+		views = append(views, ViewSource{Name: name, Tables: extractSourceTables(sqlText.String)})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate view sources: %w", err)
+	}
+	return views, nil
 }
 
 func columnCount(db *sql.DB, table string) (int, error) {
@@ -136,6 +188,7 @@ func countRows(db *sql.DB, table string) (int, error) {
 
 // CreateTableOrView creates a table or view.
 func CreateTableOrView(db *sql.DB, req domain.TableCreateRequest) error {
+	defer InvalidateRuntime(db)
 	if err := validateIdentifier(req.Name); err != nil {
 		return err
 	}
@@ -452,6 +505,7 @@ func indexColumns(db *sql.DB, idx string) ([]string, error) {
 
 // UpdateTableOrView applies schema mutations.
 func UpdateTableOrView(db *sql.DB, name string, req domain.TableUpdateRequest) error {
+	defer InvalidateRuntime(db)
 	if err := validateIdentifier(name); err != nil {
 		return err
 	}
@@ -647,6 +701,7 @@ func UpdateTableOrView(db *sql.DB, name string, req domain.TableUpdateRequest) e
 
 // DeleteTableOrView drops an object and its metadata.
 func DeleteTableOrView(db *sql.DB, name string, meta json.RawMessage) error {
+	defer InvalidateRuntime(db)
 	if err := validateIdentifier(name); err != nil {
 		return err
 	}
@@ -680,6 +735,7 @@ func DeleteTableOrView(db *sql.DB, name string, meta json.RawMessage) error {
 
 // CreateIndex creates index, unique index, or FTS index.
 func CreateIndex(db *sql.DB, table string, req domain.IndexCreateRequest) error {
+	defer InvalidateRuntime(db)
 	if err := validateIdentifier(table); err != nil {
 		return err
 	}
@@ -797,6 +853,7 @@ func validateGeneratedFormula(formula string) error {
 
 // DeleteIndex deletes index or FTS helper objects.
 func DeleteIndex(db *sql.DB, table, idx string, meta json.RawMessage) error {
+	defer InvalidateRuntime(db)
 	if err := validateIdentifier(table); err != nil {
 		return err
 	}

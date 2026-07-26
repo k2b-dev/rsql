@@ -134,6 +134,7 @@ export const runBenchmark = async (options: RunnerOptions): Promise<{
         query_timeout_ms: profile.serverFlags.queryTimeoutMs,
         namespace_idle_timeout_ms: profile.serverFlags.namespaceIdleTimeoutMs,
         max_open_namespaces: profile.serverFlags.maxOpenNamespaces,
+        namespace_read_connections: profile.serverFlags.namespaceReadConnections,
         pprof_enabled: profile.pprof.enabled,
       },
     },

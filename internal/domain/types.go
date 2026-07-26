@@ -8,6 +8,7 @@ import "encoding/json"
 // (apply the default) from "provided as false" (explicitly disable).
 type NamespaceConfig struct {
 	JournalMode  string `json:"journal_mode"`
+	Synchronous  string `json:"synchronous"`
 	BusyTimeout  int    `json:"busy_timeout"`
 	MaxDBSize    int64  `json:"max_db_size"`
 	QueryTimeout int    `json:"query_timeout"`
@@ -87,10 +88,10 @@ type TableUpdateRequest struct {
 
 // ListMeta is the metadata payload for list responses.
 type ListMeta struct {
-	TotalCount  int `json:"total_count"`
-	FilterCount int `json:"filter_count"`
-	Limit       int `json:"limit"`
-	Offset      int `json:"offset"`
+	TotalCount  *int `json:"total_count,omitempty"`
+	FilterCount *int `json:"filter_count,omitempty"`
+	Limit       int  `json:"limit"`
+	Offset      int  `json:"offset"`
 }
 
 // ListResponse wraps data plus list metadata.

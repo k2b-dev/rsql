@@ -307,8 +307,17 @@ func (h *apiHandler) createNamespace(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, result)
 }
 
-func (h *apiHandler) listNamespaces(w http.ResponseWriter, _ *http.Request) {
-	result, err := h.service.ListNamespaces()
+func (h *apiHandler) listNamespaces(w http.ResponseWriter, r *http.Request) {
+	limit := 0
+	if value := r.URL.Query().Get("limit"); value != "" {
+		parsed, err := strconv.Atoi(value)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_request", "limit must be an integer")
+			return
+		}
+		limit = parsed
+	}
+	result, err := h.service.ListNamespaces(limit, r.URL.Query().Get("cursor"))
 	if err != nil {
 		writeServiceError(w, err)
 		return

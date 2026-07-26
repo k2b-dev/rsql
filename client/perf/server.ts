@@ -11,13 +11,20 @@ let binaryPathPromise: Promise<string> | null = null;
 interface StartServerOptions {
   profile: ProfileConfig;
   enablePprof: boolean;
+  binaryPath?: string;
+  dataDir?: string;
 }
 
-export const startServer = async ({ profile, enablePprof }: StartServerOptions): Promise<RunningServer> => {
-  const binaryPath = await buildBinary();
+export const startServer = async ({
+  profile,
+  enablePprof,
+  binaryPath: explicitBinaryPath,
+  dataDir: explicitDataDir,
+}: StartServerOptions): Promise<RunningServer> => {
+  const binaryPath = explicitBinaryPath ?? (await buildBinary());
   const port = await getFreePort();
   const token = `perf_token_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-  const dataDir = await mkdtemp(join(tmpdir(), "rsql-perf-data-"));
+  const dataDir = explicitDataDir ?? (await mkdtemp(join(tmpdir(), "rsql-perf-data-")));
   const listen = `127.0.0.1:${port}`;
   const url = `http://${listen}`;
 
@@ -37,6 +44,10 @@ export const startServer = async ({ profile, enablePprof }: StartServerOptions):
     String(profile.serverFlags.queryTimeoutMs),
     "--namespace-idle-timeout-ms",
     String(profile.serverFlags.namespaceIdleTimeoutMs),
+    "--max-open-namespaces",
+    String(profile.serverFlags.maxOpenNamespaces),
+    "--namespace-read-connections",
+    String(profile.serverFlags.namespaceReadConnections),
   ];
 
   if (enablePprof) {

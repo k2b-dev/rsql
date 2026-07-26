@@ -37,6 +37,7 @@ export interface ProfileConfig {
     queryTimeoutMs: number;
     namespaceIdleTimeoutMs: number;
     maxOpenNamespaces: number;
+    namespaceReadConnections: number;
   };
 }
 

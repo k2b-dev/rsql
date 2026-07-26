@@ -35,6 +35,7 @@ type StreamResponse struct {
 // NamespaceConfig configures one namespace database.
 type NamespaceConfig struct {
 	JournalMode  string `json:"journal_mode"`
+	Synchronous  string `json:"synchronous"`
 	BusyTimeout  int    `json:"busy_timeout"`
 	MaxDBSize    int64  `json:"max_db_size,omitempty"`
 	QueryTimeout int    `json:"query_timeout"`
@@ -47,6 +48,7 @@ func DefaultNamespaceConfig() NamespaceConfig {
 	foreignKeys := true
 	return NamespaceConfig{
 		JournalMode:  "wal",
+		Synchronous:  "full",
 		BusyTimeout:  5000,
 		QueryTimeout: 10000,
 		ForeignKeys:  &foreignKeys,
@@ -67,6 +69,18 @@ type NamespaceRecord struct {
 	Config         *NamespaceConfig `json:"config,omitempty"`
 	LastActivityAt string           `json:"last_activity_at,omitempty"`
 	Storage        *StorageSnapshot `json:"storage,omitempty"`
+}
+
+// NamespaceListOptions selects one namespace page.
+type NamespaceListOptions struct {
+	Limit  int
+	Cursor string
+}
+
+// NamespacePage is one bounded page of namespace records.
+type NamespacePage struct {
+	Data       []NamespaceRecord `json:"data"`
+	NextCursor string            `json:"next_cursor,omitempty"`
 }
 
 // ColumnDefinition describes one table column.
@@ -133,10 +147,10 @@ type QueryRequest struct {
 
 // ListMeta describes a paginated row result.
 type ListMeta struct {
-	TotalCount  int `json:"total_count"`
-	FilterCount int `json:"filter_count"`
-	Limit       int `json:"limit"`
-	Offset      int `json:"offset"`
+	TotalCount  *int `json:"total_count,omitempty"`
+	FilterCount *int `json:"filter_count,omitempty"`
+	Limit       int  `json:"limit"`
+	Offset      int  `json:"offset"`
 }
 
 // RowsResponse represents regular and aggregate row-list responses.

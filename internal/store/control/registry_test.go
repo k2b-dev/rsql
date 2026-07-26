@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -16,8 +17,19 @@ func TestRegistryCRUD(t *testing.T) {
 	defer r.Close()
 
 	p := PathFor(dir, "workspace")
-	if filepath.Base(p) != "workspace.db" {
-		t.Fatalf("unexpected path: %s", p)
+	relative, err := filepath.Rel(filepath.Join(dir, "namespaces"), p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parts := strings.Split(relative, string(filepath.Separator))
+	if len(parts) != 3 || len(parts[0]) != 2 || len(parts[1]) != 2 || len(strings.TrimSuffix(parts[2], ".db")) != 64 {
+		t.Fatalf("unexpected sharded path: %s", p)
+	}
+	if PathFor(dir, "workspace") != p {
+		t.Fatal("namespace path is not deterministic")
+	}
+	if PathFor(dir, "other") == p {
+		t.Fatal("different namespaces resolved to the same path")
 	}
 
 	if err := r.Create("workspace", p); err != nil {
@@ -154,5 +166,35 @@ func TestRegistryConcurrentCreates(t *testing.T) {
 	}
 	if len(list) != n {
 		t.Fatalf("expected %d namespaces, got %d", n, len(list))
+	}
+}
+
+func TestRegistryListPage(t *testing.T) {
+	dir := t.TempDir()
+	registry, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = registry.Close() })
+
+	for _, name := range []string{"alpha", "bravo", "charlie", "delta"} {
+		if err := registry.Create(name, PathFor(dir, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	first, cursor, err := registry.ListPage(2, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first) != 2 || first[0].Name != "alpha" || first[1].Name != "bravo" || cursor != "bravo" {
+		t.Fatalf("unexpected first page: records=%#v cursor=%q", first, cursor)
+	}
+	second, cursor, err := registry.ListPage(2, cursor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(second) != 2 || second[0].Name != "charlie" || second[1].Name != "delta" || cursor != "" {
+		t.Fatalf("unexpected second page: records=%#v cursor=%q", second, cursor)
 	}
 }

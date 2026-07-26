@@ -1,7 +1,9 @@
 package control
 
 import (
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -163,7 +165,43 @@ func (r *Registry) List() ([]NamespaceRecord, error) {
 	return records, nil
 }
 
+// ListPage returns active namespace records after the cursor in name order.
+func (r *Registry) ListPage(limit int, cursor string) ([]NamespaceRecord, string, error) {
+	rows, err := r.db.Query(`
+		SELECT name, db_path, created_at
+		FROM namespaces
+		WHERE deleted_at IS NULL AND name > ?
+		ORDER BY name
+		LIMIT ?
+	`, cursor, limit+1)
+	if err != nil {
+		return nil, "", fmt.Errorf("list namespace page: %w", err)
+	}
+	defer rows.Close()
+
+	records := make([]NamespaceRecord, 0, limit+1)
+	for rows.Next() {
+		var rec NamespaceRecord
+		if err := rows.Scan(&rec.Name, &rec.DBPath, &rec.CreatedAt); err != nil {
+			return nil, "", fmt.Errorf("scan namespace page: %w", err)
+		}
+		records = append(records, rec)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, "", fmt.Errorf("iterate namespace page: %w", err)
+	}
+
+	nextCursor := ""
+	if len(records) > limit {
+		nextCursor = records[limit-1].Name
+		records = records[:limit]
+	}
+	return records, nextCursor, nil
+}
+
 // PathFor computes the canonical namespace DB path.
 func PathFor(dataDir, name string) string {
-	return filepath.Join(dataDir, "namespaces", name+".db")
+	sum := sha256.Sum256([]byte(name))
+	hash := hex.EncodeToString(sum[:])
+	return filepath.Join(dataDir, "namespaces", hash[:2], hash[2:4], hash+".db")
 }

@@ -15,6 +15,7 @@ export interface CreateRsqlClientOptions {
 
 export interface NamespaceConfig {
   journal_mode: string;
+  synchronous?: "full" | "normal";
   busy_timeout: number;
   max_db_size?: number;
   query_timeout: number;
@@ -77,8 +78,8 @@ export interface IndexCreateRequest {
 }
 
 export interface ListMeta {
-  total_count: number;
-  filter_count: number;
+  total_count?: number;
+  filter_count?: number;
   limit: number;
   offset: number;
 }
@@ -154,6 +155,16 @@ export interface NamespaceRecord {
   config?: NamespaceConfig;
   last_activity_at?: string;
   storage?: StorageSnapshot;
+}
+
+export interface NamespaceListOptions {
+  limit?: number;
+  cursor?: string;
+}
+
+export interface NamespacePage {
+  data: NamespaceRecord[];
+  next_cursor?: string;
 }
 
 export type OverviewWindowName = "1h" | "24h" | "7d" | "30d";
@@ -242,7 +253,8 @@ export interface NamespaceOverview {
 
 export interface NamespacesModule {
   create(request: NamespaceDefinition): Promise<RsqlResult<NamespaceRecord>>;
-  list(): Promise<RsqlResult<NamespaceRecord[]>>;
+  list(options?: NamespaceListOptions): Promise<RsqlResult<NamespacePage>>;
+  listAll(): Promise<RsqlResult<NamespaceRecord[]>>;
   get(name: string): Promise<RsqlResult<NamespaceRecord>>;
   update(name: string, config: NamespaceConfig): Promise<RsqlResult<NamespaceRecord>>;
   delete(name: string): Promise<RsqlResult<void>>;

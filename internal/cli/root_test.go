@@ -64,6 +64,12 @@ func TestServeCommandPassesConfig(t *testing.T) {
 		if cfg.PprofListen != "127.0.0.1:6061" {
 			t.Fatalf("unexpected pprof listen: %s", cfg.PprofListen)
 		}
+		if cfg.MaxOpenNamespaces != 256 {
+			t.Fatalf("unexpected max open namespaces: %d", cfg.MaxOpenNamespaces)
+		}
+		if cfg.NamespaceReadConns != 4 {
+			t.Fatalf("unexpected namespace read connections: %d", cfg.NamespaceReadConns)
+		}
 		return nil
 	})
 
@@ -77,6 +83,8 @@ func TestServeCommandPassesConfig(t *testing.T) {
 		"--data-dir", t.TempDir(),
 		"--pprof-enabled",
 		"--pprof-listen", "127.0.0.1:6061",
+		"--max-open-namespaces", "256",
+		"--namespace-read-connections", "4",
 	})
 
 	if err := cmd.Execute(); err != nil {

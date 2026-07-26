@@ -23,9 +23,10 @@ describe("rsql client e2e", () => {
         }),
       );
       expect(created.config?.max_db_size).toBe(quotaBytes);
+      expect(created.config?.synchronous).toBe("full");
 
       const nsList = await expectOk(client.namespaces.list());
-      expect(nsList.some((entry) => entry.name === ns)).toBe(true);
+      expect(nsList.data.some((entry) => entry.name === ns)).toBe(true);
 
       const updated = await expectOk(
         client.namespaces.update(ns, {
@@ -38,6 +39,7 @@ describe("rsql client e2e", () => {
         }),
       );
       expect(updated.config?.max_db_size).toBe(quotaBytes);
+      expect(updated.config?.synchronous).toBe("full");
       const fetched = await expectOk(client.namespaces.get(ns));
       expect(fetched.config?.query_timeout).toBe(12000);
       expect(fetched.created_at).toBeTruthy();
@@ -79,7 +81,7 @@ describe("rsql client e2e", () => {
         ),
       );
 
-      const listed = await expectOk(customers.rows.list({ status: "eq.active", limit: 10, offset: 0 }));
+      const listed = await expectOk(customers.rows.list({ status: "eq.active", limit: 10, offset: 0, count: "exact" }));
       if ("meta" in listed) {
         expect(listed.meta.total_count).toBeGreaterThanOrEqual(3);
         expect(listed.meta.filter_count).toBeGreaterThanOrEqual(2);
@@ -186,7 +188,7 @@ describe("rsql client e2e", () => {
         client
           .ns(copy)
           .table<{ id?: number; name: string; state: string }>("items")
-          .rows.list({ limit: 100, offset: 0 }),
+          .rows.list({ limit: 100, offset: 0, count: "exact" }),
       );
       if ("meta" in copiedRows) {
         expect(copiedRows.meta.total_count).toBeGreaterThanOrEqual(1);
@@ -205,7 +207,7 @@ describe("rsql client e2e", () => {
         client
           .ns(imported)
           .table<{ id?: number; name: string; state: string }>("items")
-          .rows.list({ limit: 100, offset: 0 }),
+          .rows.list({ limit: 100, offset: 0, count: "exact" }),
       );
       if ("meta" in importedRows) {
         expect(importedRows.meta.total_count).toBeGreaterThanOrEqual(1);
@@ -243,7 +245,7 @@ describe("rsql client e2e", () => {
       );
 
       const rows = await expectOk(
-        db.table<{ id?: number; name: string; state: string }>("items").rows.list({ limit: 100, offset: 0 }),
+        db.table<{ id?: number; name: string; state: string }>("items").rows.list({ limit: 100, offset: 0, count: "exact" }),
       );
       if ("meta" in rows) {
         expect(rows.meta.total_count).toBeGreaterThanOrEqual(1);

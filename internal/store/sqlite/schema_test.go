@@ -11,6 +11,7 @@ import (
 
 func TestSchemaLifecycleAndIndexes(t *testing.T) {
 	db, _ := openTestDB(t)
+	db.SetMaxOpenConns(1)
 
 	createTable := domain.TableCreateRequest{
 		Type: "table",
@@ -51,6 +52,13 @@ func TestSchemaLifecycleAndIndexes(t *testing.T) {
 	}
 	if len(list) != 2 {
 		t.Fatalf("unexpected object count: %d (%#v)", len(list), list)
+	}
+	views, err := ListViewSources(db)
+	if err != nil {
+		t.Fatalf("list view sources: %v", err)
+	}
+	if len(views) != 1 || views[0].Name != "top_kunden" || len(views[0].Tables) != 1 || views[0].Tables[0] != "kunden" {
+		t.Fatalf("unexpected view sources: %#v", views)
 	}
 
 	tableObj, err := GetTable(db, "kunden")
@@ -187,6 +195,17 @@ func TestSchemaHelpersAndTxMeta(t *testing.T) {
 	}
 	if cols, err := indexColumns(db, "missing_idx"); err != nil || len(cols) != 0 {
 		t.Fatalf("expected missing index cols empty without error, got cols=%v err=%v", cols, err)
+	}
+}
+
+func TestListViewSourcesEmpty(t *testing.T) {
+	db, _ := openTestDB(t)
+	views, err := ListViewSources(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(views) != 0 {
+		t.Fatalf("unexpected views: %#v", views)
 	}
 }
 

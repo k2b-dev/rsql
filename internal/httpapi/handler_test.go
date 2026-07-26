@@ -89,7 +89,7 @@ func TestMetricsPublic(t *testing.T) {
 
 func mustNewTestService(t *testing.T) *service.Service {
 	t.Helper()
-	svc, err := service.New(t.TempDir(), 0)
+	svc, err := service.New(t.TempDir(), 0, 128, 1)
 	if err != nil {
 		t.Fatalf("new service: %v", err)
 	}

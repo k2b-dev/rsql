@@ -170,6 +170,49 @@ func TestContextCancellation(t *testing.T) {
 	}
 }
 
+func TestNamespaceListPagination(t *testing.T) {
+	var paths []string
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		paths = append(paths, request.URL.RequestURI())
+		writer.Header().Set("Content-Type", "application/json")
+		if request.URL.Query().Get("cursor") == "bravo" {
+			_, _ = io.WriteString(writer, `{"data":[{"name":"charlie"}]}`)
+			return
+		}
+		_, _ = io.WriteString(writer, `{"data":[{"name":"alpha"},{"name":"bravo"}],"next_cursor":"bravo"}`)
+	}))
+	defer server.Close()
+
+	client := mustClient(t, server.URL)
+	page, err := client.Admin().Namespaces.List(
+		context.Background(),
+		NamespaceListOptions{Limit: 2, Cursor: "alpha"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Data) != 2 || page.NextCursor != "bravo" {
+		t.Fatalf("unexpected page: %#v", page)
+	}
+	if paths[0] != "/v1/namespaces?cursor=alpha&limit=2" {
+		t.Fatalf("unexpected list URI: %s", paths[0])
+	}
+
+	all, err := client.Admin().Namespaces.ListAll(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 3 || all[2].Name != "charlie" {
+		t.Fatalf("unexpected full list: %#v", all)
+	}
+	if _, err := client.Admin().Namespaces.List(
+		context.Background(),
+		NamespaceListOptions{Limit: 501},
+	); err == nil {
+		t.Fatal("expected client-side limit validation")
+	}
+}
+
 func mustClient(t *testing.T, baseURL string) *Client {
 	t.Helper()
 	client, err := New(Config{BaseURL: baseURL, Token: "secret"})

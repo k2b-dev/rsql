@@ -30,7 +30,12 @@ func RunServe(ctx context.Context, cfg config.Config) error {
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: toSlogLevel(cfg.LogLevel)}))
 	metrics := observability.NewMetrics()
-	svc, err := service.New(cfg.DataDir, cfg.NamespaceIdleTimeout)
+	svc, err := service.New(
+		cfg.DataDir,
+		cfg.NamespaceIdleTimeout,
+		cfg.MaxOpenNamespaces,
+		cfg.NamespaceReadConns,
+	)
 	if err != nil {
 		return fmt.Errorf("initialize service: %w", err)
 	}

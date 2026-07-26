@@ -44,6 +44,16 @@ func ApplyNamespaceConfig(db *sql.DB, cfg domain.NamespaceConfig) error {
 			return fmt.Errorf("apply journal_mode: %w", err)
 		}
 	}
+	synchronous := strings.ToLower(cfg.Synchronous)
+	if synchronous == "" {
+		synchronous = "full"
+	}
+	if synchronous != "full" && synchronous != "normal" {
+		return validationErrf("synchronous must be full or normal")
+	}
+	if _, err := db.Exec("PRAGMA synchronous = " + strings.ToUpper(synchronous)); err != nil {
+		return fmt.Errorf("apply synchronous: %w", err)
+	}
 	if cfg.BusyTimeout > 0 {
 		if _, err := db.Exec(fmt.Sprintf("PRAGMA busy_timeout = %d", cfg.BusyTimeout)); err != nil {
 			return fmt.Errorf("apply busy_timeout: %w", err)
@@ -122,6 +132,7 @@ ON CONFLICT(entity_type, entity_name) DO UPDATE SET metadata_json=excluded.metad
 	if err != nil {
 		return fmt.Errorf("upsert meta: %w", err)
 	}
+	InvalidateRuntime(db)
 	return nil
 }
 
@@ -147,6 +158,7 @@ func DeleteMeta(db *sql.DB, entityType, entityName string) error {
 	if err != nil {
 		return fmt.Errorf("delete meta: %w", err)
 	}
+	InvalidateRuntime(db)
 	return nil
 }
 

@@ -88,11 +88,13 @@ func TestRowsCRUDAndBulk(t *testing.T) {
 		"order":  {"umsatz.desc"},
 		"limit":  {"10"},
 		"offset": {"0"},
+		"count":  {"exact"},
 	})
 	if err != nil {
 		t.Fatalf("list rows: %v", err)
 	}
-	if listRes.(domain.ListResponse[map[string]any]).Meta.TotalCount == 0 {
+	totalCount := listRes.(domain.ListResponse[map[string]any]).Meta.TotalCount
+	if totalCount == nil || *totalCount == 0 {
 		t.Fatal("expected rows in list")
 	}
 	clamped, err := ListRows(db, "kunden", map[string][]string{
@@ -116,12 +118,28 @@ func TestRowsCRUDAndBulk(t *testing.T) {
 		t.Fatal("expected aggregate data")
 	}
 
-	searchRes, err := ListRows(db, "kunden", map[string][]string{"search": {"Mueller"}})
+	searchRes, err := ListRows(db, "kunden", map[string][]string{
+		"search": {"Mueller"},
+		"count":  {"exact"},
+	})
 	if err != nil {
 		t.Fatalf("list search: %v", err)
 	}
-	if searchRes.(domain.ListResponse[map[string]any]).Meta.FilterCount == 0 {
+	filterCount := searchRes.(domain.ListResponse[map[string]any]).Meta.FilterCount
+	if filterCount == nil || *filterCount == 0 {
 		t.Fatal("expected search match")
+	}
+
+	uncounted, err := ListRows(db, "kunden", map[string][]string{"limit": {"1"}})
+	if err != nil {
+		t.Fatalf("list rows without count: %v", err)
+	}
+	uncountedMeta := uncounted.(domain.ListResponse[map[string]any]).Meta
+	if uncountedMeta.TotalCount != nil || uncountedMeta.FilterCount != nil {
+		t.Fatalf("unexpected default counts: %#v", uncountedMeta)
+	}
+	if _, err := ListRows(db, "kunden", map[string][]string{"count": {"approximate"}}); err == nil {
+		t.Fatal("expected invalid count mode")
 	}
 
 	row, err := GetRowByID(db, "kunden", ids[0])
@@ -462,7 +480,7 @@ func TestRowsValidationAndAtomicBranches(t *testing.T) {
 		t.Fatalf("unexpected normalize db value")
 	}
 
-	_, _, err = buildInsertStatement("kunden", map[string]any{}, "", nil)
+	_, _, err = buildMultiInsertStatement(db, nil, "kunden", nil, nil, "", false)
 	if err == nil {
 		t.Fatal("expected no writable fields error")
 	}
@@ -471,11 +489,11 @@ func TestRowsValidationAndAtomicBranches(t *testing.T) {
 	if err != nil || len(insertedRows) != 1 || len(insertedIDs) != 1 {
 		t.Fatalf("insert for updateRows branch: rows=%v ids=%v err=%v", insertedRows, insertedIDs, err)
 	}
-	if _, _, _, err := updateRows(db, "kunden", map[string]any{"x": 1}, "id = ?", []any{insertedIDs[0]}); err == nil {
+	if _, err := UpdateRowsWithOptions(db, "kunden", map[string]any{"x": 1}, "id = ?", []any{insertedIDs[0]}, MutationOptions{}); err == nil {
 		t.Fatal("expected updateRows error for no update set")
 	}
 
-	if _, _, err := deleteRows(db, "kunden", "id = ?", []any{999}); err != nil {
+	if _, err := DeleteRowsWithOptions(db, "kunden", "id = ?", []any{999}, MutationOptions{}); err != nil {
 		t.Fatalf("deleteRows with no matches should not fail: %v", err)
 	}
 
@@ -509,7 +527,7 @@ func TestConflictTargetNoUnique(t *testing.T) {
 		t.Fatalf("begin tx: %v", err)
 	}
 	defer tx.Rollback()
-	if _, err := conflictTarget(tx, "t"); err == nil {
+	if _, err := conflictTarget(db, tx, "t"); err == nil {
 		t.Fatal("expected no unique index error")
 	}
 }
@@ -523,7 +541,8 @@ func TestBuildInsertStatementUnknownPrefer(t *testing.T) {
 		t.Fatalf("begin tx: %v", err)
 	}
 	defer tx.Rollback()
-	stmt, args, err := buildInsertStatement("kunden", map[string]any{"firma": "x", "email": "x@test.com", "status": "active"}, "unknown", tx)
+	row := map[string]any{"firma": "x", "email": "x@test.com", "status": "active"}
+	stmt, args, err := buildMultiInsertStatement(db, tx, "kunden", sortedRowColumns(row), []map[string]any{row}, "unknown", false)
 	if err != nil {
 		t.Fatalf("build insert statement: %v", err)
 	}
@@ -586,5 +605,54 @@ func TestBulkReturnRepresentationLargeSet(t *testing.T) {
 	}
 	if len(deletedIDs) != total || len(deletedRows) != total {
 		t.Fatalf("unexpected bulk delete representation size: ids=%d rows=%d", len(deletedIDs), len(deletedRows))
+	}
+}
+
+func TestMutationFastPathsAvoidResultMaterialization(t *testing.T) {
+	db := setupRowsTable(t)
+	rows := make([]map[string]any, 20)
+	for i := range rows {
+		rows[i] = map[string]any{
+			"firma":  fmt.Sprintf("Fast %d", i),
+			"email":  fmt.Sprintf("fast-%d@test.com", i),
+			"status": "active",
+		}
+	}
+
+	inserted, err := InsertRowsWithOptions(db, "kunden", rows, InsertOptions{})
+	if err != nil {
+		t.Fatalf("fast insert: %v", err)
+	}
+	if inserted.Affected != len(rows) || inserted.Rows != nil || inserted.IDs != nil {
+		t.Fatalf("unexpected fast insert result: %#v", inserted)
+	}
+
+	updated, err := UpdateRowsWithOptions(
+		db,
+		"kunden",
+		map[string]any{"status": "inactive"},
+		`status = ?`,
+		[]any{"active"},
+		MutationOptions{},
+	)
+	if err != nil {
+		t.Fatalf("fast update: %v", err)
+	}
+	if updated.Affected != len(rows) || updated.Rows != nil || updated.IDs != nil {
+		t.Fatalf("unexpected fast update result: %#v", updated)
+	}
+
+	deleted, err := DeleteRowsWithOptions(
+		db,
+		"kunden",
+		`status = ?`,
+		[]any{"inactive"},
+		MutationOptions{},
+	)
+	if err != nil {
+		t.Fatalf("fast delete: %v", err)
+	}
+	if deleted.Affected != len(rows) || deleted.Rows != nil || deleted.IDs != nil {
+		t.Fatalf("unexpected fast delete result: %#v", deleted)
 	}
 }

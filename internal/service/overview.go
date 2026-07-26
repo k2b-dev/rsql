@@ -2,7 +2,6 @@ package service
 
 import (
 	"database/sql"
-	"fmt"
 	"sort"
 	"time"
 
@@ -33,16 +32,9 @@ func (s *Service) Overview(namespace, windowName string) (domain.NamespaceOvervi
 			"window must be one of 1h, 24h, 7d, or 30d",
 		)
 	}
-	record, err := s.registry.Get(namespace)
+	path, err := s.pathForNamespace(namespace)
 	if err != nil {
-		if err == sql.ErrNoRows {
-			return domain.NamespaceOverview{}, domain.NewError(
-				domain.ErrNamespaceNotFound,
-				404,
-				fmt.Sprintf("Namespace '%s' does not exist", namespace),
-			)
-		}
-		return domain.NamespaceOverview{}, domain.WrapError(domain.ErrInternal, 500, "failed to read namespace", err)
+		return domain.NamespaceOverview{}, err
 	}
 	config, err := s.GetNamespaceConfig(namespace)
 	if err != nil {
@@ -51,9 +43,9 @@ func (s *Service) Overview(namespace, windowName string) (domain.NamespaceOvervi
 
 	var storage sqlite.StorageInfo
 	var schema domain.OverviewSchema
-	err = s.ns.WithRead(namespace, record.DBPath, func(db *sql.DB) error {
+	err = s.ns.WithRead(namespace, path, func(db *sql.DB) error {
 		var readErr error
-		storage, readErr = sqlite.Storage(db, record.DBPath, config.MaxDBSize)
+		storage, readErr = sqlite.Storage(db, path, config.MaxDBSize)
 		if readErr != nil {
 			return readErr
 		}

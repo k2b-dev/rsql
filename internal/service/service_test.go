@@ -20,12 +20,31 @@ import (
 
 func newTestService(t *testing.T) *Service {
 	t.Helper()
-	svc, err := New(t.TempDir(), 0)
+	svc, err := New(t.TempDir(), 0, 128, 1)
 	if err != nil {
 		t.Fatalf("new service: %v", err)
 	}
 	t.Cleanup(func() { _ = svc.Close() })
 	return svc
+}
+
+func TestServiceConfiguresMaxOpenNamespaces(t *testing.T) {
+	svc, err := New(t.TempDir(), 0, 1, 1)
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+	t.Cleanup(func() { _ = svc.Close() })
+
+	cfg := domain.NamespaceConfig{JournalMode: "wal", BusyTimeout: 5000, QueryTimeout: 10000, ForeignKeys: domain.BoolPtr(true)}
+	for _, name := range []string{"one", "two"} {
+		if _, err := svc.CreateNamespace(domain.NamespaceDefinition{Name: name, Config: cfg}); err != nil {
+			t.Fatalf("create namespace %s: %v", name, err)
+		}
+	}
+
+	if got := svc.ns.OpenCount(); got > 1 {
+		t.Fatalf("retained %d namespace handles, want at most 1", got)
+	}
 }
 
 func TestNamespaceLifecycle(t *testing.T) {
@@ -39,13 +58,16 @@ func TestNamespaceLifecycle(t *testing.T) {
 	if created["name"] != "workspace1" {
 		t.Fatalf("unexpected namespace name: %v", created["name"])
 	}
+	if created["config"].(domain.NamespaceConfig).Synchronous != "full" {
+		t.Fatalf("expected create to default synchronous to full: %v", created["config"])
+	}
 
-	list, err := svc.ListNamespaces()
+	list, err := svc.ListNamespaces(0, "")
 	if err != nil {
 		t.Fatalf("list namespaces: %v", err)
 	}
-	if len(list) != 1 {
-		t.Fatalf("expected 1 namespace, got %d", len(list))
+	if len(list.Data) != 1 {
+		t.Fatalf("expected 1 namespace, got %d", len(list.Data))
 	}
 
 	info, err := svc.GetNamespace("workspace1")
@@ -68,6 +90,9 @@ func TestNamespaceLifecycle(t *testing.T) {
 	if readCfg.BusyTimeout != 6000 {
 		t.Fatalf("expected busy_timeout 6000, got %d", readCfg.BusyTimeout)
 	}
+	if readCfg.Synchronous != "full" {
+		t.Fatalf("expected update to default synchronous to full, got %q", readCfg.Synchronous)
+	}
 
 	if err := svc.DeleteNamespace("workspace1"); err != nil {
 		t.Fatalf("delete namespace: %v", err)
@@ -75,6 +100,22 @@ func TestNamespaceLifecycle(t *testing.T) {
 
 	if _, err := svc.GetNamespace("workspace1"); err == nil {
 		t.Fatal("expected not found after delete")
+	}
+}
+
+func TestNamespaceRejectsUnsafeSynchronousModeBeforeCreate(t *testing.T) {
+	svc := newTestService(t)
+
+	_, err := svc.CreateNamespace(domain.NamespaceDefinition{
+		Name:   "unsafe",
+		Config: domain.NamespaceConfig{Synchronous: "off"},
+	})
+	var domainErr *domain.Error
+	if !errors.As(err, &domainErr) || domainErr.HTTPStatus != 400 {
+		t.Fatalf("expected 400 domain error, got %v", err)
+	}
+	if _, statErr := os.Stat(control.PathFor(svc.dataDir, "unsafe")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("unsafe namespace file created: %v", statErr)
 	}
 }
 
@@ -87,15 +128,76 @@ func TestListNamespacesDoesNotOpenTenantDatabases(t *testing.T) {
 		}
 	}
 
-	namespaces, err := svc.ListNamespaces()
+	namespaces, err := svc.ListNamespaces(500, "")
 	if err != nil {
 		t.Fatalf("list namespaces: %v", err)
 	}
-	if len(namespaces) != 500 {
-		t.Fatalf("namespace count = %d, want 500", len(namespaces))
+	if len(namespaces.Data) != 500 {
+		t.Fatalf("namespace count = %d, want 500", len(namespaces.Data))
 	}
 	if got := svc.ns.OpenCount(); got != 0 {
 		t.Fatalf("list opened %d tenant databases", got)
+	}
+}
+
+func TestListNamespacesUsesKeysetPagination(t *testing.T) {
+	svc := newTestService(t)
+	for _, name := range []string{"alpha", "bravo", "charlie"} {
+		if _, err := svc.CreateNamespace(domain.NamespaceDefinition{Name: name, Config: defaultNamespaceConfig()}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	first, err := svc.ListNamespaces(2, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first.Data) != 2 || first.Data[0]["name"] != "alpha" || first.NextCursor != "bravo" {
+		t.Fatalf("unexpected first page: %#v", first)
+	}
+	second, err := svc.ListNamespaces(2, first.NextCursor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(second.Data) != 1 || second.Data[0]["name"] != "charlie" || second.NextCursor != "" {
+		t.Fatalf("unexpected second page: %#v", second)
+	}
+	if _, err := svc.ListNamespaces(MaxNamespacePageSize+1, ""); err == nil {
+		t.Fatal("expected oversized page to fail")
+	}
+	if _, err := svc.ListNamespaces(10, "../invalid"); err == nil {
+		t.Fatal("expected invalid cursor to fail")
+	}
+}
+
+func TestDataPathDoesNotQueryControlDatabase(t *testing.T) {
+	svc := newTestService(t)
+	if _, err := svc.CreateNamespace(domain.NamespaceDefinition{Name: "cached", Config: defaultNamespaceConfig()}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.CreateTableOrView("cached", domain.TableCreateRequest{
+		Type:    "table",
+		Name:    "items",
+		Columns: []domain.ColumnDefinition{{Name: "name", Type: "text"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.InsertRows("cached", "items", []map[string]any{{"name": "value"}}, "", nil); err != nil {
+		t.Fatalf("seed rows: %v", err)
+	}
+	if err := svc.ns.CloseHandle("cached"); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.registry.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	row, err := svc.GetRow("cached", "items", int64(1))
+	if err != nil {
+		t.Fatalf("cold data path used closed registry: %v", err)
+	}
+	if row["name"] != "value" {
+		t.Fatalf("unexpected row: %#v", row)
 	}
 }
 
@@ -246,13 +348,18 @@ func TestSchemaRowsQueryAndOverview(t *testing.T) {
 		t.Fatalf("bulk insert: %v", err)
 	}
 
-	rowsRes, err := svc.ListRows("work", "kunden", map[string][]string{"status": {"eq.active"}, "limit": {"10"}, "offset": {"0"}})
+	rowsRes, err := svc.ListRows("work", "kunden", map[string][]string{
+		"status": {"eq.active"},
+		"limit":  {"10"},
+		"offset": {"0"},
+		"count":  {"exact"},
+	})
 	if err != nil {
 		t.Fatalf("list rows: %v", err)
 	}
 	rowsWrapped := rowsRes.(domain.ListResponse[map[string]any])
-	if rowsWrapped.Meta.FilterCount != 2 {
-		t.Fatalf("unexpected filter_count: %d", rowsWrapped.Meta.FilterCount)
+	if rowsWrapped.Meta.FilterCount == nil || *rowsWrapped.Meta.FilterCount != 2 {
+		t.Fatalf("unexpected filter_count: %v", rowsWrapped.Meta.FilterCount)
 	}
 
 	row1, err := svc.GetRow("work", "kunden", int64(1))
@@ -348,11 +455,16 @@ func TestSSEAndDupExportImport(t *testing.T) {
 		t.Fatalf("import db: %v", err)
 	}
 
-	rows, err := svc.ListRows("copy", "items", map[string][]string{"limit": {"10"}, "offset": {"0"}})
+	rows, err := svc.ListRows("copy", "items", map[string][]string{
+		"limit":  {"10"},
+		"offset": {"0"},
+		"count":  {"exact"},
+	})
 	if err != nil {
 		t.Fatalf("list copied rows: %v", err)
 	}
-	if rows.(domain.ListResponse[map[string]any]).Meta.TotalCount == 0 {
+	totalCount := rows.(domain.ListResponse[map[string]any]).Meta.TotalCount
+	if totalCount == nil || *totalCount == 0 {
 		t.Fatal("expected copied data after import")
 	}
 }

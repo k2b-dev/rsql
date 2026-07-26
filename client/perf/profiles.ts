@@ -5,6 +5,7 @@ const shared = {
     queryTimeoutMs: 10000,
     namespaceIdleTimeoutMs: 300000,
     maxOpenNamespaces: 1024,
+    namespaceReadConnections: 1,
   },
 };
 

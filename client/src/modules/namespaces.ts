@@ -1,5 +1,14 @@
 import type { HttpClient } from "../http.js";
-import type { ImportFile, NamespacesModule, NamespaceConfig, NamespaceDefinition } from "../types.js";
+import type {
+  ImportFile,
+  NamespaceListOptions,
+  NamespacePage,
+  NamespaceRecord,
+  NamespacesModule,
+  NamespaceConfig,
+  NamespaceDefinition,
+  RsqlResult,
+} from "../types.js";
 
 const version = "v1";
 const jsonHeaders: HeadersInit = {
@@ -20,8 +29,39 @@ export const createNamespacesModule = (http: HttpClient): NamespacesModule => {
       });
     },
 
-    list() {
-      return http.json(`/${version}/namespaces`);
+    list(options?: NamespaceListOptions) {
+      return http.json<NamespacePage>(
+        http.withQuery(`/${version}/namespaces`, {
+          limit: options?.limit,
+          cursor: options?.cursor,
+        }),
+      );
+    },
+
+    async listAll() {
+      const records: NamespaceRecord[] = [];
+      let cursor: string | undefined;
+      let lastResult: RsqlResult<NamespacePage> | undefined;
+      do {
+        lastResult = await http.json<NamespacePage>(
+          http.withQuery(`/${version}/namespaces`, {
+            limit: 500,
+            cursor,
+          }),
+        );
+        if (!lastResult.ok) {
+          return lastResult;
+        }
+        records.push(...lastResult.data.data);
+        cursor = lastResult.data.next_cursor;
+      } while (cursor);
+
+      return {
+        ok: true,
+        data: records,
+        status: lastResult?.status ?? 200,
+        headers: lastResult?.headers ?? new Headers(),
+      };
     },
 
     get(name: string) {
@@ -79,6 +119,7 @@ export const createNamespacesModule = (http: HttpClient): NamespacesModule => {
 const withDefaultNamespaceConfig = (config?: NamespaceConfig): NamespaceConfig => {
   const fallback: NamespaceConfig = {
     journal_mode: "wal",
+    synchronous: "full",
     busy_timeout: 5000,
     query_timeout: 10000,
     foreign_keys: true,

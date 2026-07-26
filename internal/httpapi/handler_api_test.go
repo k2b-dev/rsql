@@ -22,7 +22,7 @@ import (
 
 func newAPIForTest(t *testing.T) (http.Handler, *service.Service) {
 	t.Helper()
-	svc, err := service.New(t.TempDir(), 0)
+	svc, err := service.New(t.TempDir(), 0, 128, 1)
 	if err != nil {
 		t.Fatalf("new service: %v", err)
 	}
@@ -202,6 +202,36 @@ func TestAPIMainFlow(t *testing.T) {
 
 	mustStatus(t, doReq(t, h, http.MethodDelete, "/v1/namespaces/ws_copy", nil, nil), http.StatusNoContent)
 	mustStatus(t, doReq(t, h, http.MethodDelete, "/v1/namespaces/ws", nil, nil), http.StatusNoContent)
+}
+
+func TestNamespaceListPagination(t *testing.T) {
+	h, _ := newAPIForTest(t)
+	for _, name := range []string{"alpha", "bravo", "charlie"} {
+		mustStatus(t, doReq(t, h, http.MethodPost, "/v1/namespaces", map[string]any{"name": name}, nil), http.StatusCreated)
+	}
+
+	first := doReq(t, h, http.MethodGet, "/v1/namespaces?limit=2", nil, nil)
+	mustStatus(t, first, http.StatusOK)
+	var page service.NamespacePage
+	if err := json.Unmarshal(first.Body.Bytes(), &page); err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Data) != 2 || page.Data[0]["name"] != "alpha" || page.NextCursor != "bravo" {
+		t.Fatalf("unexpected first page: %#v", page)
+	}
+	second := doReq(t, h, http.MethodGet, "/v1/namespaces?limit=2&cursor=bravo", nil, nil)
+	mustStatus(t, second, http.StatusOK)
+	page = service.NamespacePage{}
+	if err := json.Unmarshal(second.Body.Bytes(), &page); err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Data) != 1 || page.Data[0]["name"] != "charlie" || page.NextCursor != "" {
+		t.Fatalf("unexpected second page: %#v", page)
+	}
+
+	mustStatus(t, doReq(t, h, http.MethodGet, "/v1/namespaces?limit=nope", nil, nil), http.StatusBadRequest)
+	mustStatus(t, doReq(t, h, http.MethodGet, "/v1/namespaces?limit=501", nil, nil), http.StatusBadRequest)
+	mustStatus(t, doReq(t, h, http.MethodGet, "/v1/namespaces?cursor=../bad", nil, nil), http.StatusBadRequest)
 }
 
 func TestAPIErrorAndHelperBranches(t *testing.T) {
