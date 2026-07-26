@@ -43,12 +43,19 @@ image: /assets/rsql-social.png
     </div>
   </section>
 
-  <section class="rsql-proof" aria-label="Runtime model">
-    <div class="rsql-home-shell rsql-proof-grid">
-      <div class="rsql-proof-item"><strong class="rsql-proof-value">1 file</strong><span class="rsql-proof-label">per namespace</span></div>
-      <div class="rsql-proof-item"><strong class="rsql-proof-value">1 writer</strong><span class="rsql-proof-label">serialized per database</span></div>
-      <div class="rsql-proof-item"><strong class="rsql-proof-value">4 readers</strong><span class="rsql-proof-label">concurrent per database</span></div>
-      <div class="rsql-proof-item"><strong class="rsql-proof-value">128 idle</strong><span class="rsql-proof-label">handles retained by default</span></div>
+  <section class="rsql-proof" aria-label="Measured performance">
+    <div class="rsql-home-shell">
+      <div class="rsql-proof-context">
+        <span>Measured fast profile</span>
+        <a href="/en/project/performance">Benchmark methodology →</a>
+      </div>
+      <div class="rsql-proof-grid">
+        <div class="rsql-proof-item"><strong class="rsql-proof-value">3,018/s</strong><span class="rsql-proof-label">point reads</span></div>
+        <div class="rsql-proof-item"><strong class="rsql-proof-value">0.38 ms</strong><span class="rsql-proof-label">point-read p95</span></div>
+        <div class="rsql-proof-item"><strong class="rsql-proof-value">666/s</strong><span class="rsql-proof-label">mixed writes</span></div>
+        <div class="rsql-proof-item"><strong class="rsql-proof-value">0 / 559k</strong><span class="rsql-proof-label">errors / measured ops</span></div>
+      </div>
+      <p class="rsql-proof-note">Apple Silicon laptop · 10 namespaces · 12 real-world scenarios · machine-specific, not a capacity SLA</p>
     </div>
   </section>
 

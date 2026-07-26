@@ -325,16 +325,41 @@
   background: color-mix(in srgb, var(--rsql-paper) 72%, transparent);
 }
 
+.rsql-proof-context {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem 1.25rem 0.8rem;
+  color: var(--rsql-blue);
+  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.rsql-home-page .fibel-prose .rsql-proof-context a {
+  color: var(--rsql-muted);
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.rsql-home-page .fibel-prose .rsql-proof-context a:hover {
+  color: var(--rsql-gold);
+}
+
 .rsql-proof-grid {
   display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  border-block: 1px solid var(--rsql-line);
+  background: var(--rsql-line);
 }
 
 .rsql-proof-item {
   padding: 1.55rem 1.25rem;
-}
-
-.rsql-proof-item + .rsql-proof-item {
-  border-top: 1px solid var(--rsql-line);
+  background: color-mix(in srgb, var(--rsql-paper) 88%, transparent);
 }
 
 .rsql-proof-value {
@@ -350,6 +375,14 @@
   margin-top: 0.25rem;
   color: var(--rsql-muted);
   font-size: 0.86rem;
+}
+
+.rsql-proof-note {
+  margin: 0;
+  padding: 0.75rem 1.25rem 0.9rem;
+  color: var(--rsql-muted);
+  font-size: 0.72rem;
+  line-height: 1.5;
 }
 
 .rsql-section {
@@ -578,11 +611,6 @@
 
   .rsql-proof-grid {
     grid-template-columns: repeat(4, minmax(0, 1fr));
-  }
-
-  .rsql-proof-item + .rsql-proof-item {
-    border-top: 0;
-    border-left: 1px solid var(--rsql-line);
   }
 
   .rsql-section-head {
