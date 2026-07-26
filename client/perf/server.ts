@@ -37,8 +37,6 @@ export const startServer = async ({ profile, enablePprof }: StartServerOptions):
     String(profile.serverFlags.queryTimeoutMs),
     "--namespace-idle-timeout-ms",
     String(profile.serverFlags.namespaceIdleTimeoutMs),
-    "--max-open-namespaces",
-    String(profile.serverFlags.maxOpenNamespaces),
   ];
 
   if (enablePprof) {
