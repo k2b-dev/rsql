@@ -2,7 +2,6 @@ import type { ApiErrorBody, CreateRsqlClientOptions, QueryInput, QueryValue, Rsq
 
 export interface HttpClient {
   json<T>(path: string, init?: RequestInit): Promise<RsqlResult<T>>;
-  binary(path: string, init?: RequestInit): Promise<RsqlResult<ArrayBuffer>>;
   empty(path: string, init?: RequestInit): Promise<RsqlResult<void>>;
   raw(path: string, init?: RequestInit): Promise<RsqlResult<Response>>;
   withQuery(path: string, query?: QueryInput): string;
@@ -55,20 +54,6 @@ export const createHttpClient = (options: CreateRsqlClientOptions): HttpClient =
       };
     },
 
-    async binary(path: string, init?: RequestInit) {
-      const res = await execute(path, init);
-      if (!res.ok) {
-        return errorResult(res);
-      }
-      const data = await res.arrayBuffer();
-      return {
-        ok: true,
-        data,
-        status: res.status,
-        headers: res.headers,
-      };
-    },
-
     async empty(path: string, init?: RequestInit) {
       const res = await execute(path, init);
       if (!res.ok) {
@@ -112,27 +97,24 @@ export const createHttpClient = (options: CreateRsqlClientOptions): HttpClient =
 const errorResult = async <T>(res: Response): Promise<RsqlResult<T>> => {
   let body: ApiErrorBody = {
     error: "unknown_error",
-    message: "Unknown error",
+    message: res.statusText || "Unknown error",
   };
 
   try {
-    const maybeJson = (await res.json()) as Partial<ApiErrorBody>;
-    body = {
-      error: maybeJson.error ?? "unknown_error",
-      message: maybeJson.message ?? "Unknown error",
-    };
-  } catch {
-    try {
-      const text = await res.text();
-      if (text.trim() !== "") {
+    const text = await res.text();
+    if (text.trim() !== "") {
+      try {
+        const maybeJson = JSON.parse(text) as Partial<ApiErrorBody>;
         body = {
-          error: "unknown_error",
-          message: text,
+          error: maybeJson.error ?? "unknown_error",
+          message: maybeJson.message ?? (res.statusText || "Unknown error"),
         };
+      } catch {
+        body.message = text;
       }
-    } catch {
-      // Keep fallback body
     }
+  } catch {
+    // Keep the HTTP status fallback when the body cannot be read.
   }
 
   return {

@@ -971,7 +971,22 @@ const scenarioS9: ScenarioDefinition = {
         const runTransfer = async (pc: ScenarioPhaseContext, seq: number): Promise<void> => {
           const target = scenarioNamespace(ctx.runId, this.id, `tgt_${repeat}_${seq}`);
           await withNamespace(pc, this.id, this.name, target, async () => {
-            const exported = await pc.op(this.id, this.name, "namespace.export_db", () => pc.client.namespaces.exportDb(source), { namespace: source });
+            const exported = await pc.op(
+              this.id,
+              this.name,
+              "namespace.export_db",
+              async () => {
+                const result = await pc.client.namespaces.exportDb(source);
+                if (!result.ok) {
+                  return result;
+                }
+                return {
+                  ...result,
+                  data: await result.data.arrayBuffer(),
+                };
+              },
+              { namespace: source },
+            );
             await pc.op(
               this.id,
               this.name,

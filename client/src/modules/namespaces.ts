@@ -51,7 +51,7 @@ export const createNamespacesModule = (http: HttpClient): NamespacesModule => {
     },
 
     exportDb(name: string) {
-      return http.binary(`/${version}/namespaces/${encodeURIComponent(name)}/export`);
+      return http.raw(`/${version}/namespaces/${encodeURIComponent(name)}/export`);
     },
 
     importDb(name: string, file: ImportFile) {

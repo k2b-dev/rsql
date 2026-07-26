@@ -247,7 +247,8 @@ export interface NamespacesModule {
   update(name: string, config: NamespaceConfig): Promise<RsqlResult<NamespaceRecord>>;
   delete(name: string): Promise<RsqlResult<void>>;
   duplicate(source: string, target: string): Promise<RsqlResult<{ source: string; target: string }>>;
-  exportDb(name: string): Promise<RsqlResult<ArrayBuffer>>;
+  /** Stream a consistent SQLite snapshot. The caller consumes response.body. */
+  exportDb(name: string): Promise<RsqlResult<Response>>;
   importDb(name: string, file: ImportFile): Promise<RsqlResult<{ imported: boolean; type: string }>>;
   importCsv(name: string, table: string, file: ImportFile): Promise<RsqlResult<{ inserted: number }>>;
 }

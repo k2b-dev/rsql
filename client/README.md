@@ -119,6 +119,12 @@ await ns.tables.list();
 const overview = await ns.overview.get({ window: "24h" });
 console.log(overview);
 
+// Database exports stay streaming; choose how and where to consume the body.
+const exported = await explicit.namespaces.exportDb("crm");
+if (exported.ok) {
+  await exported.data.body?.pipeTo(destination);
+}
+
 // Lazy default client, reads env on first property access only
 // Required env: RSQL_URL, RSQL_API_TOKEN
 await rsql.namespaces.list();

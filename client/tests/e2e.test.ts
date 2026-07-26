@@ -7,30 +7,40 @@ describe("rsql client e2e", () => {
     await withServer(async (running) => {
       const client = createRsqlClient({ url: running.url, token: running.token });
       const ns = `e2e_main_${Date.now()}`;
+      const quotaBytes = 8 * 1024 * 1024;
 
-      await expectOk(client.namespaces.create({
-        name: ns,
-        config: {
-          journal_mode: "wal",
-          busy_timeout: 5000,
-          query_timeout: 10000,
-          foreign_keys: true,
-          read_only: false,
-        },
-      }));
+      const created = await expectOk(
+        client.namespaces.create({
+          name: ns,
+          config: {
+            journal_mode: "wal",
+            busy_timeout: 5000,
+            max_db_size: quotaBytes,
+            query_timeout: 10000,
+            foreign_keys: true,
+            read_only: false,
+          },
+        }),
+      );
+      expect(created.config?.max_db_size).toBe(quotaBytes);
 
       const nsList = await expectOk(client.namespaces.list());
       expect(nsList.some((entry) => entry.name === ns)).toBe(true);
 
-      await expectOk(
+      const updated = await expectOk(
         client.namespaces.update(ns, {
           journal_mode: "wal",
           busy_timeout: 7000,
+          max_db_size: quotaBytes,
           query_timeout: 12000,
           foreign_keys: true,
           read_only: false,
         }),
       );
+      expect(updated.config?.max_db_size).toBe(quotaBytes);
+      const fetched = await expectOk(client.namespaces.get(ns));
+      expect(fetched.config?.query_timeout).toBe(12000);
+      expect(fetched.created_at).toBeTruthy();
 
       const workspace = client.ns(ns);
 
@@ -127,6 +137,8 @@ describe("rsql client e2e", () => {
       const overview = await expectOk(workspace.overview.get({ window: "24h" }));
       expect(overview.schema.tables).toBeGreaterThanOrEqual(1);
       expect(overview.storage.allocated_bytes).toBeGreaterThan(0);
+      expect(overview.storage.quota_bytes).toBe(quotaBytes);
+      expect(overview.storage.remaining_bytes).toBeLessThan(quotaBytes);
       expect(overview.activity.requests).toBeGreaterThan(0);
 
       await expectOk(view.schema.delete({ cleanup: true }));
@@ -141,6 +153,7 @@ describe("rsql client e2e", () => {
       const client = createRsqlClient({ url: running.url, token: running.token });
       const source = `e2e_src_${Date.now()}`;
       const copy = `e2e_copy_${Date.now()}`;
+      const imported = `e2e_import_${Date.now()}`;
 
       await expectOk(client.namespaces.create({ name: source }));
       const src = client.ns(source);
@@ -159,9 +172,14 @@ describe("rsql client e2e", () => {
       const items = src.table<{ id?: number; name: string; state: string }>("items");
       await expectOk(items.rows.insert({ name: "One", state: "open" }));
 
-      await expectOk(client.namespaces.duplicate(source, copy));
+      const duplicated = await expectOk(client.namespaces.duplicate(source, copy));
+      expect(duplicated).toEqual({ source, target: copy });
 
-      const exported = await expectOk(client.namespaces.exportDb(source));
+      const exportResponse = await expectOk(client.namespaces.exportDb(source));
+      expect(exportResponse.bodyUsed).toBe(false);
+      expect(exportResponse.headers.get("content-type")).toBe("application/octet-stream");
+      expect(exportResponse.headers.get("content-disposition")).toContain(`filename="${source}.db"`);
+      const exported = await exportResponse.arrayBuffer();
       expect(exported.byteLength).toBeGreaterThan(0);
 
       const copiedRows = await expectOk(
@@ -174,6 +192,26 @@ describe("rsql client e2e", () => {
         expect(copiedRows.meta.total_count).toBeGreaterThanOrEqual(1);
       }
 
+      await expectOk(client.namespaces.create({ name: imported }));
+      const importResult = await expectOk(
+        client.namespaces.importDb(imported, {
+          filename: `${source}.db`,
+          content: exported,
+          contentType: "application/octet-stream",
+        }),
+      );
+      expect(importResult).toEqual({ imported: true, type: "db" });
+      const importedRows = await expectOk(
+        client
+          .ns(imported)
+          .table<{ id?: number; name: string; state: string }>("items")
+          .rows.list({ limit: 100, offset: 0 }),
+      );
+      if ("meta" in importedRows) {
+        expect(importedRows.meta.total_count).toBeGreaterThanOrEqual(1);
+      }
+
+      await expectOk(client.namespaces.delete(imported));
       await expectOk(client.namespaces.delete(copy));
       await expectOk(client.namespaces.delete(source));
     });
