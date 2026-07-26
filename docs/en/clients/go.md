@@ -14,6 +14,10 @@ The `github.com/k2b-dev/rsql/client` package separates administrative
 namespace management from operations bound to one database. The client is safe
 for concurrent use and accepts a custom `http.Client`.
 
+```bash
+go get github.com/k2b-dev/rsql/client@v0.4.0
+```
+
 ## Create a client
 
 ```go

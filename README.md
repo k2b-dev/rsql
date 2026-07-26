@@ -13,10 +13,20 @@ It provides:
 - tenant-facing storage, traffic, latency, contention, and growth statistics
 - Go and TypeScript clients
 
+## Install
+
+```bash
+go install github.com/k2b-dev/rsql/cmd/rsql@v0.4.0
+```
+
+The release is also available as
+`ghcr.io/k2b-dev/rsql:0.4.0` and as static Linux and macOS binaries on the
+[GitHub release](https://github.com/k2b-dev/rsql/releases/tag/v0.4.0).
+
 ## Run
 
 ```bash
-go run ./cmd/rsql serve \
+rsql serve \
   --listen=127.0.0.1:8080 \
   --api-token=dev-token \
   --data-dir=./data
@@ -35,7 +45,7 @@ Configuration precedence is CLI flags, `RSQL_*` environment variables, then
 defaults. Print the resolved configuration with:
 
 ```bash
-go run ./cmd/rsql config print --format=json --api-token=dev-token
+rsql config print --format=json --api-token=dev-token
 ```
 
 ## Documentation

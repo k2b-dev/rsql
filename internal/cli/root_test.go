@@ -20,7 +20,7 @@ func TestVersionCommand(t *testing.T) {
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("execute version: %v", err)
 	}
-	if !strings.Contains(buf.String(), "rsql v") {
+	if buf.String() != "rsql v0.4.0\n" {
 		t.Fatalf("unexpected output: %s", buf.String())
 	}
 }
