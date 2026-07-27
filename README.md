@@ -15,13 +15,34 @@ It provides:
 
 ## Install
 
+Native packages are the recommended production installation on systemd-based
+Linux distributions.
+
+Debian 12 or newer:
+
 ```bash
-go install github.com/k2b-dev/rsql/cmd/rsql@v0.4.0
+curl -fLO https://github.com/k2b-dev/rsql/releases/download/v1.0.0/rsql_1.0.0_amd64.deb
+sudo apt install ./rsql_1.0.0_amd64.deb
 ```
 
-The release is also available as
-`ghcr.io/k2b-dev/rsql:0.4.0` and as static Linux and macOS binaries on the
-[GitHub release](https://github.com/k2b-dev/rsql/releases/tag/v0.4.0).
+Rocky Linux 9 or newer:
+
+```bash
+curl -fLO https://github.com/k2b-dev/rsql/releases/download/v1.0.0/rsql-1.0.0-1.x86_64.rpm
+sudo dnf install ./rsql-1.0.0-1.x86_64.rpm
+```
+
+The packages install the `rsql` CLI, a hardened systemd unit, and
+`/etc/rsql/rsql.env`. Set `RSQL_API_TOKEN` in that file before starting the
+service:
+
+```bash
+sudo systemctl enable --now rsql
+```
+
+Static Linux and macOS binaries and the
+`ghcr.io/k2b-dev/rsql:1.0.0` container image are also available from the
+[GitHub release](https://github.com/k2b-dev/rsql/releases/tag/v1.0.0).
 
 ## Run
 
@@ -63,16 +84,15 @@ canonical links, Open Graph URLs, `robots.txt`, and the sitemap use absolute
 URLs.
 
 Start with the [quickstart](./docs/en/quickstart.md), then use the
+[production installation guide](./docs/en/operations/installation.md),
 [HTTP API reference](./docs/en/reference/http-api.md),
 [Go client guide](./docs/en/clients/go.md), or
 [multi-tenant hosting guide](./docs/en/hosting/multi-tenant.md).
 
-The server is pre-1.0. Breaking API changes may occur before v1.0.
-
 ## Clients
 
 ```bash
-go get github.com/k2b-dev/rsql@v0.4.0
+go get github.com/k2b-dev/rsql@v1.0.0
 bun add @k2b/rsql
 ```
 

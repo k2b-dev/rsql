@@ -5,7 +5,7 @@ section: Clients
 order: 60
 description: Use the concurrency-safe Go client for administration, data operations, streaming, and gateways.
 tags: [go, client, streaming]
-updated: 2026-07-26
+updated: 2026-07-27
 ---
 
 # Go Client
@@ -15,7 +15,7 @@ namespace management from operations bound to one database. The client is safe
 for concurrent use and accepts a custom `http.Client`.
 
 ```bash
-go get github.com/k2b-dev/rsql@v0.4.0
+go get github.com/k2b-dev/rsql@v1.0.0
 ```
 
 ## Create a client

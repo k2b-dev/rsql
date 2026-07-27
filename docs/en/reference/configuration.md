@@ -5,7 +5,7 @@ section: Operations
 order: 170
 description: Configure rsql through Cobra flags, environment variables, and dotenv files.
 tags: [configuration, cobra, viper]
-updated: 2026-07-26
+updated: 2026-07-27
 ---
 
 # Configuration
@@ -21,7 +21,7 @@ variables use uppercase names and replace hyphens with underscores.
 
 | Flag | Environment | Default |
 | --- | --- | --- |
-| `--listen` | `RSQL_LISTEN` | `:8080` |
+| `--listen` | `RSQL_LISTEN` | `127.0.0.1:8080` |
 | `--data-dir` | `RSQL_DATA_DIR` | `data` |
 | `--api-token` | `RSQL_API_TOKEN` | required |
 | `--log-level` | `RSQL_LOG_LEVEL` | `info` |
@@ -38,6 +38,10 @@ variables use uppercase names and replace hyphens with underscores.
 
 Supported log levels are `debug`, `info`, `warn`, and `error`.
 
+The default listener is intentionally restricted to loopback. Set it to a
+private interface or `0.0.0.0:8080` only when the deployment provides the
+required network boundary.
+
 `max-open-namespaces` is a soft retention bound. Active handles are never
 evicted, but excess non-busy handles are closed by a bounded clock-style pass.
 Higher values require more memory and file descriptors for SQLite pools.
@@ -50,7 +54,7 @@ each additional connection increases file-descriptor and statement-cache use.
 ## Inspect the effective configuration
 
 ```bash
-go run ./cmd/rsql config print \
+rsql config print \
   --format=json \
   --api-token=dev-token
 ```

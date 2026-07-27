@@ -5,7 +5,7 @@ section: Operations
 order: 180
 description: Monitor rsql with Prometheus metrics, namespace overview data, and optional pprof.
 tags: [prometheus, pprof, operations]
-updated: 2026-07-26
+updated: 2026-07-27
 ---
 
 # Metrics and Profiling
@@ -43,7 +43,7 @@ are intentionally not exported as high-cardinality Prometheus labels.
 Enable pprof only while diagnosing a trusted environment:
 
 ```bash
-go run ./cmd/rsql serve \
+rsql serve \
   --api-token=dev-token \
   --pprof-enabled \
   --pprof-listen=127.0.0.1:6060

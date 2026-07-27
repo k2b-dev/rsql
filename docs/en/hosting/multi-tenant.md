@@ -5,7 +5,7 @@ section: Hosting
 order: 80
 description: Place rsql behind an authenticated gateway and preserve namespace isolation.
 tags: [hosting, tenants, gateway]
-updated: 2026-07-26
+updated: 2026-07-27
 ---
 
 # Multi-Tenant Hosting
@@ -29,6 +29,10 @@ on a private network and implement this sequence at the gateway:
 Do not forward `/v1/namespaces` to tenants. The Go client's
 `Database.Forward` enforces the data-plane route boundary, but authentication
 and namespace resolution remain application responsibilities.
+
+rsql defines the private HTTP and storage contract but does not select or
+configure the surrounding proxy, TLS termination, firewall, DNS, or load
+balancer. Keep those choices in the deployment layer.
 
 ## Provision a tenant
 

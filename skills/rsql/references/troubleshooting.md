@@ -74,7 +74,7 @@ them. Avoid large offsets for latency-sensitive pagination.
 Use optional pprof only on a protected operations listener:
 
 ```sh
-go run ./cmd/rsql serve \
+rsql serve \
   --api-token=dev-token \
   --pprof-enabled \
   --pprof-listen=127.0.0.1:6060

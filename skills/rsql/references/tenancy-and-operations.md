@@ -20,13 +20,25 @@ A tenant-facing deployment requires a gateway that:
 Namespace files isolate data and runtime locks. The gateway owns identity,
 authorization, request-rate limits, CPU/query policy, and tenant routing.
 
+## Production installation
+
+Native DEB and RPM packages are the recommended production installation on
+systemd-based Linux. They install `/usr/bin/rsql`, a hardened
+`rsql.service`, and `/etc/rsql/rsql.env`. The service does not start until the
+operator sets `RSQL_API_TOKEN` and explicitly enables it.
+
+Package installations use `/var/lib/rsql` and listen on loopback. Static
+binaries and a multi-architecture OCI image remain supported alternatives.
+rsql does not install or select a proxy, TLS terminator, firewall, DNS,
+monitoring product, backup scheduler, or secret manager.
+
 ## Runtime configuration
 
 Precedence is CLI flag, `RSQL_*` environment variable, then default.
 
 | Key | Default |
 | --- | --- |
-| `listen` | `:8080` |
+| `listen` | `127.0.0.1:8080` |
 | `pprof-enabled` | `false` |
 | `pprof-listen` | `127.0.0.1:6060` |
 | `data-dir` | `data` |
@@ -43,6 +55,9 @@ Precedence is CLI flag, `RSQL_*` environment variable, then default.
 
 Environment keys replace hyphens with underscores and add `RSQL_`.
 `config print` emits a redacted effective configuration.
+
+The loopback listener is a secure default. Bind a private interface only when
+the deployment already enforces the surrounding network boundary.
 
 Namespace configuration defaults to WAL with `synchronous=full`. Hosts may
 choose `synchronous=normal` per namespace for higher write throughput when

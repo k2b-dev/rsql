@@ -5,7 +5,7 @@ section: Hosting
 order: 100
 description: Back up, restore, move, and shard namespace databases safely.
 tags: [backup, restore, scaling]
-updated: 2026-07-26
+updated: 2026-07-27
 ---
 
 # Backups and Scaling
@@ -87,3 +87,8 @@ rsql does not provide replication, consensus, distributed transactions, or
 automatic failover. Build those properties at the deployment layer or use
 durable block storage and a single active process with an external recovery
 procedure.
+
+Native package installations store all service data below `/var/lib/rsql`.
+Stop `rsql.service` before taking an offline filesystem copy. Online backups
+should use the namespace export endpoint instead of copying active SQLite
+files.

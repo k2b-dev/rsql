@@ -5,7 +5,7 @@ section: Project
 order: 190
 description: Understand the rsql process, package boundaries, storage layout, and request flow.
 tags: [architecture, internals, go]
-updated: 2026-07-26
+updated: 2026-07-27
 ---
 
 # Architecture
@@ -67,6 +67,18 @@ avoiding a server-wide database lock.
 Identifiers are validated before SQL construction. Values use parameters.
 Structured writes validate logical column types. The raw SQL endpoint accepts
 only constrained read-only statements and blocks internal objects.
+
+## Deployment boundary
+
+rsql owns database behavior, runtime limits, storage layout, authentication of
+its private API token, health endpoints, metrics, and graceful shutdown. Native
+packages provide the service account, systemd unit, and environment file needed
+to run that process.
+
+The deployment owns user authentication, tenant routing, network policy, TLS,
+DNS, proxy selection, secret distribution, backup scheduling, monitoring
+products, and placement across rsql instances. None of those systems is bundled
+or configured by rsql.
 
 For implementation work, use the repository-local `skills/rsql` agent skill,
 which routes agents to source-grounded architecture and API references.

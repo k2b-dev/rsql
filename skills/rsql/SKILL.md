@@ -43,7 +43,7 @@ orchestrator owns namespace provisioning and lifecycle.
 ## Quick local start
 
 ```sh
-go run ./cmd/rsql serve \
+rsql serve \
   --listen=127.0.0.1:8080 \
   --api-token=dev-token \
   --data-dir=./data

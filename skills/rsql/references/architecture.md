@@ -93,3 +93,13 @@ split with `Admin()` and `Database(namespace)`.
 `internal/app.RunServe` handles context cancellation, SIGINT, and SIGTERM. It
 shuts down the HTTP and optional pprof servers with the configured timeout.
 Closing the service flushes telemetry and closes namespace and control stores.
+
+## Deployment responsibility
+
+rsql owns database defaults, process limits, storage layout, API-token
+validation, health endpoints, metrics, and shutdown. Native packages own only
+the service account, environment file, and systemd integration.
+
+The surrounding deployment owns identity, tenant routing, network policy, TLS,
+DNS, proxy selection, secret distribution, backups, monitoring products, and
+placement across rsql instances.

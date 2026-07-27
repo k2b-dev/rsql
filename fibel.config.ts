@@ -26,7 +26,7 @@ export default defineFibel({
     ogImage: "/assets/rsql-social.png",
   },
   headerLinks: [
-    { label: "Quickstart", value: "/quickstart" },
+    { label: "Install", value: "/operations/installation" },
     { label: "HTTP API", value: "/reference/http-api" },
     { label: "Hosting", value: "/hosting/multi-tenant" },
   ],

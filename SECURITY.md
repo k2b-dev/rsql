@@ -40,7 +40,15 @@ For HA / horizontal scaling, run separate data directories per process and shard
 
 ### Crash recovery
 
-`service.New` runs a single reconcile pass against the on-disk state at startup; see [docs/development.md § Crash recovery](docs/development.md#crash-recovery). The two known lifecycle crash windows (mid-`CreateNamespace`, mid-`DeleteNamespace`) heal on the next boot. SSE event delivery is at-most-once: subscribers that fall behind their channel buffer drop events permanently for that connection.
+SQLite recovers committed databases through its journal or WAL when a namespace
+is opened. rsql intentionally does not scan tenant files or reconcile registry
+entries at process startup, so fleet size does not determine startup time.
+
+An abrupt stop during namespace creation or deletion can leave a registry entry
+whose database file is missing. The affected namespace fails when first used
+and must be deleted and reprovisioned or restored by the operator. SSE event
+delivery is at-most-once: subscribers that fall behind their channel buffer
+drop events permanently for that connection.
 
 ## Reporting a vulnerability
 

@@ -5,7 +5,7 @@ section: Start
 order: 20
 description: Start rsql and perform the first schema and row operations.
 tags: [quickstart, curl]
-updated: 2026-07-26
+updated: 2026-07-27
 ---
 
 # Quickstart
@@ -15,13 +15,13 @@ and executes a read-only query.
 
 ## Requirements
 
-- Go 1.23 or newer.
+- The `rsql` CLI from a native package or release archive.
 - `curl` for the HTTP examples.
 
 ## Start the server
 
 ```bash
-go run ./cmd/rsql serve \
+rsql serve \
   --listen=127.0.0.1:8080 \
   --api-token=dev-token \
   --data-dir=./data
@@ -94,6 +94,7 @@ Only one `SELECT` or `WITH` statement is accepted. Use placeholders and
 
 ## Continue
 
+- [Production installation](/en/operations/installation)
 - [Schema and rows](/en/concepts/schema-and-rows)
 - [Filtering and pagination](/en/reference/filtering)
 - [Configuration](/en/reference/configuration)
