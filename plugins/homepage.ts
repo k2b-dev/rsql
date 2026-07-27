@@ -1,4 +1,4 @@
-import type { FibelPlugin } from "@valentinkolb/fibel";
+import type { FibelPlugin } from "@k2b/fibel";
 
 const homepageStylesheet = "/assets/homepage.css";
 
@@ -11,13 +11,13 @@ export function homepagePlugin(): FibelPlugin {
       );
 
       const renderPage = context.services.renderPage;
-      context.services.renderPage = (page, request, currentContext) => {
-        const html = renderPage(page, request, currentContext);
-        if (page.slug !== "/") {
-          return html;
+      context.services.renderPage = async (page, request, currentContext) => {
+        const rendered = await renderPage(page, request, currentContext);
+        if (page.slug !== "/" || typeof rendered !== "string") {
+          return rendered;
         }
 
-        return html
+        return rendered
           .replace('<body class="', '<body class="rsql-home-page ')
           .replace(
             '<meta property="og:type" content="article">',

@@ -1,8 +1,10 @@
-import { defaultPlugins, defineFibel } from "@valentinkolb/fibel";
-import { imprintPlugin } from "@valentinkolb/fibel/plugins";
+import { defaultPlugins, defineFibel } from "@k2b/fibel";
+import { imprintPlugin } from "@k2b/fibel/plugins";
 import { homepagePlugin } from "./plugins/homepage";
 
-const siteUrl = process.env.RSQL_DOCS_SITE_URL?.replace(/\/+$/, "");
+const siteUrl = (
+  process.env.RSQL_DOCS_SITE_URL ?? "https://rsql.k2b.dev"
+).replace(/\/+$/, "");
 
 export default defineFibel({
   title: "rsql",

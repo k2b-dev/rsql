@@ -69,28 +69,44 @@ jobs:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
           version="${RELEASE_TAG#v}"
+          package_version="$version-1"
+          if [[ "$version" =~ ^([0-9]+\.[0-9]+\.[0-9]+)-rc\.([0-9]+)$ ]]; then
+            base_version="${BASH_REMATCH[1]}"
+            rc_number="${BASH_REMATCH[2]}"
+          fi
+
           case "$DISTRIBUTION" in
             debian)
               image="debian:12-slim"
               package="/release/rsql_${version}_amd64.deb"
               install_command="apt-get update && apt-get install -y \$PACKAGE"
               reinstall_command="apt-get install --reinstall -y \$PACKAGE"
+              version_command="dpkg-query -W rsql | awk '{print \$2}'"
+              if [[ -n "${base_version:-}" ]]; then
+                package_version="${base_version}~rc.${rc_number}-1"
+              fi
               ;;
             rocky)
               image="rockylinux:9"
               package="/release/rsql-${version}-1.x86_64.rpm"
               install_command="dnf install -y \$PACKAGE"
               reinstall_command="dnf reinstall -y \$PACKAGE"
+              version_command="rpm -q --qf '%{VERSION}-%{RELEASE}' rsql"
+              if [[ -n "${base_version:-}" ]]; then
+                package_version="${base_version}-0.rc.${rc_number}"
+              fi
               ;;
           esac
 
           docker run --rm --platform linux/amd64 \
             --volume "$PWD/release-dist:/release:ro" \
             --env EXPECTED_VERSION="$version" \
+            --env EXPECTED_PACKAGE_VERSION="$package_version" \
             --env PACKAGE="$package" \
             "$image" sh -ec "
               $install_command
               test \"\$(rsql version)\" = \"rsql v\$EXPECTED_VERSION\"
+              test \"\$($version_command)\" = \"\$EXPECTED_PACKAGE_VERSION\"
               getent passwd rsql >/dev/null
               test -f /usr/lib/systemd/system/rsql.service
               test -f /etc/rsql/rsql.env
@@ -118,11 +134,17 @@ jobs:
           GH_REPO: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
         run: |
+          release_flags=()
+          if [[ "$GITHUB_REF_NAME" == *-rc.* ]]; then
+            release_flags+=(--prerelease)
+          fi
+
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             gh release upload "$GITHUB_REF_NAME" release-dist/* --clobber
           else
             gh release create "$GITHUB_REF_NAME" release-dist/* \
               --generate-notes \
               --title "$GITHUB_REF_NAME" \
-              --verify-tag
+              --verify-tag \
+              "${release_flags[@]}"
           fi

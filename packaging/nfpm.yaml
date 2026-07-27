@@ -4,7 +4,7 @@ name: rsql
 arch: ${RSQL_PACKAGE_ARCH}
 platform: linux
 version: ${RSQL_PACKAGE_VERSION}
-release: "1"
+release: ${RSQL_PACKAGE_RELEASE}
 section: database
 priority: optional
 maintainer: k2b <opensource@k2b.dev>

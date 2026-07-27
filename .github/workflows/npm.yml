@@ -37,6 +37,11 @@ jobs:
             exit 1
           fi
           echo "value=$package_version" >> "$GITHUB_OUTPUT"
+          if [[ "$package_version" == *-rc.* ]]; then
+            echo "tag=rc" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=latest" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: check registry
         id: registry
@@ -91,4 +96,6 @@ jobs:
       - name: publish
         if: steps.registry.outputs.publish == 'true'
         working-directory: client
-        run: npm publish --access public --provenance
+        env:
+          NPM_TAG: ${{ steps.version.outputs.tag }}
+        run: npm publish --access public --provenance --tag "$NPM_TAG"

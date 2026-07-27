@@ -2,11 +2,11 @@
 
 set -euo pipefail
 
-tag="${1:?usage: build-release.sh <vX.Y.Z> [output-directory]}"
+tag="${1:?usage: build-release.sh <vX.Y.Z[-rc.N]> [output-directory]}"
 output_dir="${2:-release-dist}"
 nfpm_bin="${NFPM_BIN:-nfpm}"
 
-if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$ ]]; then
   echo "invalid release tag: $tag" >&2
   exit 1
 fi
@@ -24,6 +24,18 @@ fi
 version="${tag#v}"
 cli_version="$(go run ./cmd/rsql version)"
 package_version="$(sed -n 's/^[[:space:]]*"version": "\([^"]*\)",/\1/p' client/package.json | head -n 1)"
+deb_version="$version"
+deb_release="1"
+rpm_version="$version"
+rpm_release="1"
+
+if [[ "$version" =~ ^([0-9]+\.[0-9]+\.[0-9]+)-rc\.([0-9]+)$ ]]; then
+  base_version="${BASH_REMATCH[1]}"
+  rc_number="${BASH_REMATCH[2]}"
+  deb_version="${base_version}~rc.${rc_number}"
+  rpm_version="$base_version"
+  rpm_release="0.rc.${rc_number}"
+fi
 
 if [[ "$cli_version" != "rsql v$version" ]]; then
   echo "CLI version does not match $tag: $cli_version" >&2
@@ -81,12 +93,16 @@ for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
 
     export RSQL_PACKAGE_ARCH="$goarch"
     export RSQL_PACKAGE_BINARY="$binary"
-    export RSQL_PACKAGE_VERSION="$version"
 
+    export RSQL_PACKAGE_VERSION="$deb_version"
+    export RSQL_PACKAGE_RELEASE="$deb_release"
     "$nfpm_bin" package \
       --config packaging/nfpm.yaml \
       --packager deb \
       --target "$output_dir/rsql_${version}_${goarch}.deb"
+
+    export RSQL_PACKAGE_VERSION="$rpm_version"
+    export RSQL_PACKAGE_RELEASE="$rpm_release"
     "$nfpm_bin" package \
       --config packaging/nfpm.yaml \
       --packager rpm \
