@@ -1,0 +1,57 @@
+# yaml-language-server: $schema=https://nfpm.goreleaser.com/schema.json
+
+name: rsql
+arch: ${RSQL_PACKAGE_ARCH}
+platform: linux
+version: ${RSQL_PACKAGE_VERSION}
+release: "1"
+section: database
+priority: optional
+maintainer: k2b <opensource@k2b.dev>
+description: |
+  Multi-tenant SQLite HTTP server.
+  rsql provides one isolated SQLite database per namespace with schema,
+  row, query, realtime, quota, and operational APIs.
+vendor: k2b
+homepage: https://github.com/k2b-dev/rsql
+license: MIT
+
+depends:
+  - systemd
+
+contents:
+  - src: ${RSQL_PACKAGE_BINARY}
+    dst: /usr/bin/rsql
+    expand: true
+    file_info:
+      mode: 0755
+  - src: packaging/rsql.service
+    dst: /usr/lib/systemd/system/rsql.service
+    file_info:
+      mode: 0644
+  - src: packaging/rsql.env
+    dst: /etc/rsql/rsql.env
+    type: config|noreplace
+    file_info:
+      mode: 0600
+  - src: README.md
+    dst: /usr/share/doc/rsql/README.md
+    file_info:
+      mode: 0644
+  - src: LICENSE
+    dst: /usr/share/doc/rsql/LICENSE
+    file_info:
+      mode: 0644
+
+scripts:
+  preinstall: packaging/scripts/preinstall.sh
+  postinstall: packaging/scripts/postinstall.sh
+  preremove: packaging/scripts/preremove.sh
+  postremove: packaging/scripts/postremove.sh
+
+rpm:
+  group: Applications/Databases
+  compression: zstd
+
+deb:
+  compression: xz

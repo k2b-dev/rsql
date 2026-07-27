@@ -9,10 +9,12 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  github-release:
+  build:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      attestations: write
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@v7
 
@@ -21,11 +23,99 @@ jobs:
           go-version: "1.23"
           cache: true
 
+      - name: verify Go
+        run: |
+          go vet ./...
+          go test -race ./...
+
+      - name: install nFPM
+        run: go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.42.1
+
       - name: build release artifacts
         run: ./scripts/build-release.sh "$GITHUB_REF_NAME"
 
+      - name: verify checksums
+        working-directory: release-dist
+        run: shasum -a 256 --check checksums.txt
+
+      - name: attest release artifacts
+        uses: actions/attest@v4
+        with:
+          subject-path: release-dist/*
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: release-dist
+          path: release-dist/*
+          if-no-files-found: error
+          retention-days: 1
+
+  package-smoke:
+    needs: build
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        distribution: [debian, rocky]
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          name: release-dist
+          path: release-dist
+
+      - name: install package on ${{ matrix.distribution }}
+        env:
+          DISTRIBUTION: ${{ matrix.distribution }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          version="${RELEASE_TAG#v}"
+          case "$DISTRIBUTION" in
+            debian)
+              image="debian:12-slim"
+              package="/release/rsql_${version}_amd64.deb"
+              install_command="apt-get update && apt-get install -y \$PACKAGE"
+              reinstall_command="apt-get install --reinstall -y \$PACKAGE"
+              ;;
+            rocky)
+              image="rockylinux:9"
+              package="/release/rsql-${version}-1.x86_64.rpm"
+              install_command="dnf install -y \$PACKAGE"
+              reinstall_command="dnf reinstall -y \$PACKAGE"
+              ;;
+          esac
+
+          docker run --rm --platform linux/amd64 \
+            --volume "$PWD/release-dist:/release:ro" \
+            --env EXPECTED_VERSION="$version" \
+            --env PACKAGE="$package" \
+            "$image" sh -ec "
+              $install_command
+              test \"\$(rsql version)\" = \"rsql v\$EXPECTED_VERSION\"
+              getent passwd rsql >/dev/null
+              test -f /usr/lib/systemd/system/rsql.service
+              test -f /etc/rsql/rsql.env
+              test \"\$(stat -c %a /etc/rsql/rsql.env)\" = 600
+              test \"\$(systemctl is-enabled rsql.service 2>/dev/null || true)\" = disabled
+              systemd-analyze verify /usr/lib/systemd/system/rsql.service
+              printf '%s\n' 'RSQL_API_TOKEN=preserved-token' >> /etc/rsql/rsql.env
+              $reinstall_command
+              grep -F 'RSQL_API_TOKEN=preserved-token' /etc/rsql/rsql.env
+            "
+
+  github-release:
+    needs: package-smoke
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          name: release-dist
+          path: release-dist
+
       - name: publish GitHub release
         env:
+          GH_REPO: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
         run: |
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then

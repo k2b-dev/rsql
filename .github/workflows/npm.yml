@@ -54,10 +54,35 @@ jobs:
         with:
           bun-version: "1.3.14"
 
+      - uses: actions/setup-go@v7
+        if: steps.registry.outputs.publish == 'true'
+        with:
+          go-version: "1.23"
+          cache: true
+
+      - name: download Go modules
+        if: steps.registry.outputs.publish == 'true'
+        run: go mod download
+
       - name: install
         if: steps.registry.outputs.publish == 'true'
         working-directory: client
         run: bun install --frozen-lockfile
+
+      - name: typecheck
+        if: steps.registry.outputs.publish == 'true'
+        working-directory: client
+        run: bun run typecheck
+
+      - name: test
+        if: steps.registry.outputs.publish == 'true'
+        working-directory: client
+        run: bun test --timeout 60000
+
+      - name: package smoke
+        if: steps.registry.outputs.publish == 'true'
+        working-directory: client
+        run: bun run test:package
 
       - name: update npm
         if: steps.registry.outputs.publish == 'true'

@@ -3,6 +3,8 @@ package config
 import (
 	"testing"
 	"time"
+
+	"github.com/spf13/pflag"
 )
 
 func TestLoadAndValidate(t *testing.T) {
@@ -50,6 +52,33 @@ func TestLoadAndValidate(t *testing.T) {
 	}
 	if cfg.ShutdownTimeout != 14*time.Second {
 		t.Fatalf("unexpected shutdown timeout: %v", cfg.ShutdownTimeout)
+	}
+}
+
+func TestLoadUsesSecureRuntimeDefaults(t *testing.T) {
+	v := NewViper()
+	flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
+	BindServeFlags(flags)
+	if err := v.BindPFlags(flags); err != nil {
+		t.Fatalf("bind flags: %v", err)
+	}
+
+	cfg, err := Load(v)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+
+	if cfg.Listen != "127.0.0.1:8080" {
+		t.Fatalf("unexpected default listen address: %q", cfg.Listen)
+	}
+	if cfg.DataDir != "data" {
+		t.Fatalf("unexpected default data directory: %q", cfg.DataDir)
+	}
+	if cfg.MaxOpenNamespaces != 128 {
+		t.Fatalf("unexpected default namespace limit: %d", cfg.MaxOpenNamespaces)
+	}
+	if cfg.NamespaceReadConns != 1 {
+		t.Fatalf("unexpected default read connection limit: %d", cfg.NamespaceReadConns)
 	}
 }
 

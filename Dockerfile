@@ -4,8 +4,11 @@
 # CGO_ENABLED=0 lets us produce a fully static build that runs in alpine
 # (or scratch) without libc.
 
-FROM golang:1.23-alpine AS build
+FROM --platform=$BUILDPLATFORM golang:1.23-alpine AS build
 WORKDIR /src
+
+ARG TARGETOS
+ARG TARGETARCH
 
 COPY go.mod go.sum ./
 RUN go mod download
@@ -13,7 +16,7 @@ RUN go mod download
 COPY cmd ./cmd
 COPY internal ./internal
 
-RUN CGO_ENABLED=0 go build \
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build \
         -trimpath \
         -ldflags "-s -w" \
         -o /out/rsql \

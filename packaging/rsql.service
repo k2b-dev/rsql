@@ -1,0 +1,42 @@
+[Unit]
+Description=rsql multi-tenant SQLite server
+Documentation=https://github.com/k2b-dev/rsql
+After=network.target
+
+[Service]
+Type=simple
+User=rsql
+Group=rsql
+EnvironmentFile=/etc/rsql/rsql.env
+WorkingDirectory=/var/lib/rsql
+ExecStart=/usr/bin/rsql serve
+Restart=on-failure
+RestartSec=2s
+TimeoutStopSec=15s
+LimitNOFILE=1048576
+UMask=0027
+
+StateDirectory=rsql
+StateDirectoryMode=0750
+
+CapabilityBoundingSet=
+LockPersonality=true
+NoNewPrivileges=true
+PrivateDevices=true
+PrivateTmp=true
+ProtectClock=true
+ProtectControlGroups=true
+ProtectHome=true
+ProtectHostname=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectSystem=strict
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

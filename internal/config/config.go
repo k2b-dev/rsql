@@ -45,7 +45,7 @@ func InitEnv(v *viper.Viper) {
 
 // BindServeFlags binds runtime configuration flags to a flag set.
 func BindServeFlags(flags *pflag.FlagSet) {
-	flags.String("listen", ":8080", "HTTP listen address")
+	flags.String("listen", "127.0.0.1:8080", "HTTP listen address")
 	flags.Bool("pprof-enabled", false, "Enable pprof endpoints on a dedicated listener")
 	flags.String("pprof-listen", "127.0.0.1:6060", "pprof listen address")
 	flags.String("data-dir", "data", "Path to the data directory")
