@@ -4,6 +4,8 @@ rsql is a multi-tenant SQLite HTTP server written in Go. Each namespace is an
 independent SQLite database with its own schema, lazily opened connection pools,
 writer lock, storage quota, telemetry, and change stream.
 
+Documentation: [rsql.k2b.dev](https://rsql.k2b.dev)
+
 It provides:
 
 - namespace provisioning, configuration, duplication, import, and export
