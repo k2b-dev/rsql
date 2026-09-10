@@ -65,7 +65,7 @@ Install the pinned nFPM release, then build into a new output directory:
 
 ```bash
 go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.42.1
-./scripts/build-release.sh v1.0.0-rc.1 /tmp/rsql-release
+./scripts/build-release.sh v1.0.0 /tmp/rsql-release
 ```
 
 The tag workflow installs the generated packages on Debian and Rocky Linux

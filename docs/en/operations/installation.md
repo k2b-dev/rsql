@@ -15,9 +15,6 @@ package installs the `rsql` CLI, a hardened systemd unit, and a protected
 environment file. Release packages are smoke-tested on Debian 12 and Rocky
 Linux 9 on `amd64`; release artifacts are built for both `amd64` and `arm64`.
 
-The commands below install `v1.0.0-rc.1`, a release candidate intended for
-installation and workload validation before the stable v1 release.
-
 The service listens on `127.0.0.1:8080` by default. rsql does not install or
 configure a reverse proxy, TLS, firewall rules, DNS, or an external monitoring
 system.
@@ -25,20 +22,20 @@ system.
 ## Install on Debian
 
 ```bash
-curl -fLO https://github.com/k2b-dev/rsql/releases/download/v1.0.0-rc.1/rsql_1.0.0-rc.1_amd64.deb
-sudo apt install ./rsql_1.0.0-rc.1_amd64.deb
+curl -fLO https://github.com/k2b-dev/rsql/releases/download/v1.0.0/rsql_1.0.0_amd64.deb
+sudo apt install ./rsql_1.0.0_amd64.deb
 ```
 
-Use `rsql_1.0.0-rc.1_arm64.deb` on an ARM64 host.
+Use `rsql_1.0.0_arm64.deb` on an ARM64 host.
 
 ## Install on Rocky Linux
 
 ```bash
-curl -fLO https://github.com/k2b-dev/rsql/releases/download/v1.0.0-rc.1/rsql-1.0.0-rc.1-1.x86_64.rpm
-sudo dnf install ./rsql-1.0.0-rc.1-1.x86_64.rpm
+curl -fLO https://github.com/k2b-dev/rsql/releases/download/v1.0.0/rsql-1.0.0-1.x86_64.rpm
+sudo dnf install ./rsql-1.0.0-1.x86_64.rpm
 ```
 
-Use `rsql-1.0.0-rc.1-1.aarch64.rpm` on an ARM64 host.
+Use `rsql-1.0.0-1.aarch64.rpm` on an ARM64 host.
 
 ## Configure the service
 
@@ -93,13 +90,13 @@ sudo sh -c 'set -a; . /etc/rsql/rsql.env; exec rsql config print'
 Every release contains `checksums.txt`. Verify one downloaded package with:
 
 ```bash
-grep 'rsql_1.0.0-rc.1_amd64.deb' checksums.txt | shasum -a 256 --check
+grep 'rsql_1.0.0_amd64.deb' checksums.txt | shasum -a 256 --check
 ```
 
 GitHub also records build provenance for the release artifacts:
 
 ```bash
-gh attestation verify rsql_1.0.0-rc.1_amd64.deb --repo k2b-dev/rsql
+gh attestation verify rsql_1.0.0_amd64.deb --repo k2b-dev/rsql
 ```
 
 ## Upgrade
@@ -131,7 +128,7 @@ Every GitHub release also contains static Linux and macOS tarballs with
 SHA-256 checksums. The binary has no runtime SQLite or libc dependency.
 
 ```bash
-tar -xzf rsql_1.0.0-rc.1_linux_amd64.tar.gz
+tar -xzf rsql_1.0.0_linux_amd64.tar.gz
 ./rsql version
 ```
 
@@ -143,7 +140,7 @@ systemd unit.
 The OCI image remains supported for container-managed environments:
 
 ```bash
-docker pull ghcr.io/k2b-dev/rsql:1.0.0-rc.1
+docker pull ghcr.io/k2b-dev/rsql:1.0.0
 ```
 
 Mount one persistent data directory into `/data` and run exactly one rsql

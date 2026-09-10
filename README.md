@@ -4,9 +4,6 @@ rsql is a multi-tenant SQLite HTTP server written in Go. Each namespace is an
 independent SQLite database with its own schema, lazily opened connection pools,
 writer lock, storage quota, telemetry, and change stream.
 
-`v1.0.0-rc.1` is a release candidate for validating installation and production
-workloads before the stable v1 release.
-
 It provides:
 
 - namespace provisioning, configuration, duplication, import, and export
@@ -24,15 +21,15 @@ Linux distributions.
 Debian 12 or newer:
 
 ```bash
-curl -fLO https://github.com/k2b-dev/rsql/releases/download/v1.0.0-rc.1/rsql_1.0.0-rc.1_amd64.deb
-sudo apt install ./rsql_1.0.0-rc.1_amd64.deb
+curl -fLO https://github.com/k2b-dev/rsql/releases/download/v1.0.0/rsql_1.0.0_amd64.deb
+sudo apt install ./rsql_1.0.0_amd64.deb
 ```
 
 Rocky Linux 9 or newer:
 
 ```bash
-curl -fLO https://github.com/k2b-dev/rsql/releases/download/v1.0.0-rc.1/rsql-1.0.0-rc.1-1.x86_64.rpm
-sudo dnf install ./rsql-1.0.0-rc.1-1.x86_64.rpm
+curl -fLO https://github.com/k2b-dev/rsql/releases/download/v1.0.0/rsql-1.0.0-1.x86_64.rpm
+sudo dnf install ./rsql-1.0.0-1.x86_64.rpm
 ```
 
 The packages install the `rsql` CLI, a hardened systemd unit, and
@@ -44,8 +41,8 @@ sudo systemctl enable --now rsql
 ```
 
 Static Linux and macOS binaries and the
-`ghcr.io/k2b-dev/rsql:1.0.0-rc.1` container image are also available from the
-[GitHub release](https://github.com/k2b-dev/rsql/releases/tag/v1.0.0-rc.1).
+`ghcr.io/k2b-dev/rsql:1.0.0` container image are also available from the
+[GitHub release](https://github.com/k2b-dev/rsql/releases/tag/v1.0.0).
 
 ## Run
 
@@ -94,7 +91,7 @@ Start with the [quickstart](./docs/en/quickstart.md), then use the
 ## Clients
 
 ```bash
-go get github.com/k2b-dev/rsql@v1.0.0-rc.1
+go get github.com/k2b-dev/rsql@v1.0.0
 bun add @k2b/rsql
 ```
 

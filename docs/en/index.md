@@ -182,10 +182,10 @@ rows, err := contacts.Rows.List(ctx, map[string][]string{
         </div>
       </div>
       <div class="rsql-install-list">
-        <div><span>Debian</span><code>apt install ./rsql_1.0.0-rc.1_amd64.deb</code></div>
-        <div><span>Rocky Linux</span><code>dnf install ./rsql-1.0.0-rc.1-1.x86_64.rpm</code></div>
+        <div><span>Debian</span><code>apt install ./rsql_1.0.0_amd64.deb</code></div>
+        <div><span>Rocky Linux</span><code>dnf install ./rsql-1.0.0-1.x86_64.rpm</code></div>
         <div><span>TypeScript</span><code>bun add @k2b/rsql</code></div>
-        <div><span>Go client</span><code>go get github.com/k2b-dev/rsql@v1.0.0-rc.1</code></div>
+        <div><span>Go client</span><code>go get github.com/k2b-dev/rsql@v1.0.0</code></div>
       </div>
     </div>
   </section>

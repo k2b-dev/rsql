@@ -15,7 +15,7 @@ namespace management from operations bound to one database. The client is safe
 for concurrent use and accepts a custom `http.Client`.
 
 ```bash
-go get github.com/k2b-dev/rsql@v1.0.0-rc.1
+go get github.com/k2b-dev/rsql@v1.0.0
 ```
 
 ## Create a client

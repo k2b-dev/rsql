@@ -41,7 +41,7 @@ export default defineFibel({
   ],
   plugins: [
     ...defaultPlugins(),
-    imprintPlugin({ url: "https://impressum.valentin-kolb.com" }),
+    imprintPlugin({ url: "https://impressum.k2b.dev/" }),
     homepagePlugin(),
   ],
 });
