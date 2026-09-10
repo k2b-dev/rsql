@@ -81,6 +81,12 @@ bun install
 bun run docs:dev
 ```
 
+Run the published documentation image on port 3000:
+
+```bash
+docker run --rm -p 3000:3000 ghcr.io/k2b-dev/rsql-docs:latest
+```
+
 SEO URLs default to `https://rsql.k2b.dev`. Set `RSQL_DOCS_SITE_URL` only when
 the documentation is deployed at a different origin.
 

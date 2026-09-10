@@ -1,0 +1,13 @@
+*
+
+!package.json
+!bun.lock
+!tsconfig.json
+!fibel.config.ts
+
+!assets/
+!assets/**
+!docs/
+!docs/**
+!plugins/
+!plugins/**

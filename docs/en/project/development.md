@@ -5,7 +5,7 @@ section: Project
 order: 200
 description: Build, test, document, and validate changes to rsql.
 tags: [development, testing, go]
-updated: 2026-07-27
+updated: 2026-09-10
 ---
 
 # Development
@@ -54,6 +54,11 @@ bun run docs:dev
 
 Fibel serves every page as HTML and as raw Markdown through `.md` and
 `.markdown` routes. It also builds search and `llms.txt` indexes.
+
+Documentation changes publish a multi-platform image to
+`ghcr.io/k2b-dev/rsql-docs`. Use `main` or `latest` for the newest build from
+the default branch, and pin `sha-<commit>` or the image digest for a fixed
+deployment.
 
 ## Release artifacts
 
