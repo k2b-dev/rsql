@@ -4,6 +4,8 @@ Type-safe, fetch-based client for the
 [rsql](https://github.com/k2b-dev/rsql) HTTP API. It runs in Bun, Node, and
 modern browsers without runtime dependencies.
 
+Documentation: [rsql.k2b.dev](https://rsql.k2b.dev)
+
 ## Install
 
 ```bash
