@@ -135,6 +135,9 @@ func (p *sqlPolicy) sqlError(err error) error {
 	if p.denied {
 		return domain.NewError(domain.ErrSQLForbidden, 400, "SQL operation is not allowed")
 	}
+	if strings.HasPrefix(err.Error(), "missing argument with index ") || strings.HasPrefix(err.Error(), "missing named argument ") {
+		return domain.NewError(domain.ErrInvalidRequest, 400, "SQL parameters do not match the statement")
+	}
 	var e *driver.Error
 	if errors.As(err, &e) {
 		switch e.Code() & 0xff {

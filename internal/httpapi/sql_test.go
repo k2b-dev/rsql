@@ -97,6 +97,10 @@ func TestSQLHTTPIsolationAuthAndEvents(t *testing.T) {
 	if err != nil || len(logs) != 1 || logs[0].Action != "sql" {
 		t.Fatalf("atomic schema history: %+v %v", logs, err)
 	}
+	badParams := call("tenant_one", "exec", map[string]any{"sql": "INSERT INTO records(value) VALUES (?)"}, 400)
+	if badParams["error"] != "invalid_request" || badParams["statement_index"] != float64(0) {
+		t.Fatalf("parameter error: %+v", badParams)
+	}
 	// Existing read endpoint and non-transactional batches remain supported.
 	rec := doReq(t, h, http.MethodPost, "/v1/tenant_one/query", map[string]any{"statements": []map[string]any{{"sql": "SELECT COUNT(*) AS count FROM records"}}}, nil)
 	if rec.Code != 200 {

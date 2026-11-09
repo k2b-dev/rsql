@@ -45,19 +45,40 @@ func ApplyNamespaceConfig(db *sql.DB, cfg domain.NamespaceConfig) error {
 
 // ApplyNamespaceConfigContext applies PRAGMAs within the caller's deadline.
 func ApplyNamespaceConfigContext(ctx context.Context, db *sql.DB, cfg domain.NamespaceConfig) error {
-	if cfg.JournalMode != "" {
-		if _, err := db.ExecContext(ctx, "PRAGMA journal_mode = "+quotePragmaValue(cfg.JournalMode)); err != nil {
+	// PRAGMA assignment does not support bound values. Choose literal SQL from
+	// SQLite's journal modes; never compose SQL from configuration strings.
+	journalSQL := ""
+	switch strings.ToLower(cfg.JournalMode) {
+	case "":
+	case "delete":
+		journalSQL = "PRAGMA journal_mode = DELETE"
+	case "truncate":
+		journalSQL = "PRAGMA journal_mode = TRUNCATE"
+	case "persist":
+		journalSQL = "PRAGMA journal_mode = PERSIST"
+	case "memory":
+		journalSQL = "PRAGMA journal_mode = MEMORY"
+	case "wal":
+		journalSQL = "PRAGMA journal_mode = WAL"
+	case "off":
+		journalSQL = "PRAGMA journal_mode = OFF"
+	default:
+		return validationErrf("invalid journal_mode")
+	}
+	synchronousSQL := "PRAGMA synchronous = FULL"
+	switch strings.ToLower(cfg.Synchronous) {
+	case "", "full":
+	case "normal":
+		synchronousSQL = "PRAGMA synchronous = NORMAL"
+	default:
+		return validationErrf("synchronous must be full or normal")
+	}
+	if journalSQL != "" {
+		if _, err := db.ExecContext(ctx, journalSQL); err != nil {
 			return fmt.Errorf("apply journal_mode: %w", err)
 		}
 	}
-	synchronous := strings.ToLower(cfg.Synchronous)
-	if synchronous == "" {
-		synchronous = "full"
-	}
-	if synchronous != "full" && synchronous != "normal" {
-		return validationErrf("synchronous must be full or normal")
-	}
-	if _, err := db.ExecContext(ctx, "PRAGMA synchronous = "+strings.ToUpper(synchronous)); err != nil {
+	if _, err := db.ExecContext(ctx, synchronousSQL); err != nil {
 		return fmt.Errorf("apply synchronous: %w", err)
 	}
 	if cfg.BusyTimeout > 0 {
@@ -106,11 +127,6 @@ func boolInt(v bool) int {
 		return 1
 	}
 	return 0
-}
-
-func quotePragmaValue(v string) string {
-	v = strings.ReplaceAll(v, "'", "")
-	return "'" + v + "'"
 }
 
 func validateIdentifier(name string) error {

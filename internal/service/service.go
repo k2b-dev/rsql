@@ -96,6 +96,13 @@ func defaultNamespaceConfig() domain.NamespaceConfig {
 }
 
 func normalizeNamespaceConfig(cfg domain.NamespaceConfig) (domain.NamespaceConfig, error) {
+	cfg.JournalMode = strings.ToLower(cfg.JournalMode)
+	switch cfg.JournalMode {
+	case "", "delete", "truncate", "persist", "memory", "wal", "off":
+	default:
+		return domain.NamespaceConfig{}, domain.NewError(domain.ErrInvalidRequest, 400, "invalid journal_mode")
+	}
+
 	cfg.Synchronous = strings.ToLower(cfg.Synchronous)
 	if cfg.Synchronous == "" {
 		cfg.Synchronous = "full"

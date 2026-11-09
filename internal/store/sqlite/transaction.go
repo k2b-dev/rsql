@@ -91,6 +91,9 @@ func ExecuteTransaction(ctx context.Context, path string, cfg domain.NamespaceCo
 	if cfg.ReadOnly {
 		return out, nil, domain.NewError(domain.ErrReadOnly, 405, "namespace is read-only")
 	}
+	if strings.EqualFold(cfg.JournalMode, "off") {
+		return out, nil, domain.NewError(domain.ErrSQLForbidden, 400, "SQL writes require a journal mode supported by defensive SQLite")
+	}
 	file := &url.URL{Scheme: "file", Path: path}
 	db, err := sql.Open("sqlite", file.String()+"?_defensive=true&_pragma=trusted_schema(OFF)&_pragma=temp_store(MEMORY)")
 	if err != nil {
