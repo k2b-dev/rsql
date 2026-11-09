@@ -31,6 +31,11 @@ query endpoint accepts only one constrained `SELECT` or `WITH` statement,
 rejects comments and semicolons, blocks write/DDL keywords, and blocks internal
 objects.
 
+The SQL write and transaction routes use an isolated defensive SQLite connection,
+a connection authorizer, bound values, quotas, and execution/result limits.
+They reject attachments, extension loading, internal objects, and unsafe
+connection settings. See [SQL transactions](/en/reference/sql-transactions-api).
+
 These controls reduce accidental and malicious SQL access but do not replace
 gateway authorization or operating-system isolation.
 

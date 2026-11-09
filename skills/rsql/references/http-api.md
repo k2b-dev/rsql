@@ -93,7 +93,9 @@ update and delete filters use the same query grammar as row listing.
 
 | Method | Path | Success |
 | --- | --- | --- |
-| POST | `/v1/:ns/query` | `200` single data result or batch results |
+| POST | `/v1/:ns/query` | `200` single read result or sequential read batch |
+| POST | `/v1/:ns/query/exec` | `200` `{ changes, lastInsertRowid? }` |
+| POST | `/v1/:ns/query/transaction` | `200` atomic ordered `{ results }` |
 | GET | `/v1/:ns/changelog` | `200` schema changelog entries |
 | GET | `/v1/:ns/subscribe` | `200` SSE stream |
 | GET | `/v1/:ns/overview` | `200` operational summary |
@@ -110,3 +112,5 @@ Delivery is at-most-once for a connection.
 
 Overview windows are `1h`, `24h`, `7d`, and `30d`; default is `24h`. The full
 wire contract is `internal/domain/overview.go`.
+
+See `sql-transactions.md` for bound writes, atomicity, budgets, and SQL events.

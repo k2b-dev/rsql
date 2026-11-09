@@ -107,6 +107,7 @@ const errorResult = async <T>(res: Response): Promise<RsqlResult<T>> => {
         const maybeJson = JSON.parse(text) as Partial<ApiErrorBody>;
         body = {
           error: maybeJson.error ?? "unknown_error",
+          ...(typeof maybeJson.statement_index === "number" ? { statement_index: maybeJson.statement_index } : {}),
           message: maybeJson.message ?? (res.statusText || "Unknown error"),
         };
       } catch {

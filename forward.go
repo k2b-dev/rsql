@@ -130,7 +130,12 @@ func validateDatabaseRoute(route string) error {
 	switch segments[0] {
 	case "tables":
 		return nil
-	case "query", "subscribe", "changelog", "overview":
+	case "query":
+		if len(segments) == 1 || (len(segments) == 2 && (segments[1] == "exec" || segments[1] == "transaction")) {
+			return nil
+		}
+		return errors.New("database route has unexpected query path segments")
+	case "subscribe", "changelog", "overview":
 		if len(segments) != 1 {
 			return errors.New("database route has unexpected path segments")
 		}

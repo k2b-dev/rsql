@@ -257,3 +257,16 @@ func (w *flushWriter) Flush() {
 	w.flushes++
 	w.mu.Unlock()
 }
+
+func TestSQLForwardRoutes(t *testing.T) {
+	for _, route := range []string{"/query/exec", "/query/transaction"} {
+		if err := validateDatabaseRoute(route); err != nil {
+			t.Fatalf("%s: %v", route, err)
+		}
+	}
+	for _, route := range []string{"/query/exec/extra", "/query/transaction/../exec", "/query/other"} {
+		if err := validateDatabaseRoute(route); err == nil {
+			t.Fatalf("unexpected route: %s", route)
+		}
+	}
+}

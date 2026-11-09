@@ -1,6 +1,7 @@
 package sqlite
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -39,8 +40,13 @@ CREATE TABLE IF NOT EXISTS _schema_log (
 
 // ApplyNamespaceConfig applies namespace PRAGMAs.
 func ApplyNamespaceConfig(db *sql.DB, cfg domain.NamespaceConfig) error {
+	return ApplyNamespaceConfigContext(context.Background(), db, cfg)
+}
+
+// ApplyNamespaceConfigContext applies PRAGMAs within the caller's deadline.
+func ApplyNamespaceConfigContext(ctx context.Context, db *sql.DB, cfg domain.NamespaceConfig) error {
 	if cfg.JournalMode != "" {
-		if _, err := db.Exec("PRAGMA journal_mode = " + quotePragmaValue(cfg.JournalMode)); err != nil {
+		if _, err := db.ExecContext(ctx, "PRAGMA journal_mode = "+quotePragmaValue(cfg.JournalMode)); err != nil {
 			return fmt.Errorf("apply journal_mode: %w", err)
 		}
 	}
@@ -51,11 +57,11 @@ func ApplyNamespaceConfig(db *sql.DB, cfg domain.NamespaceConfig) error {
 	if synchronous != "full" && synchronous != "normal" {
 		return validationErrf("synchronous must be full or normal")
 	}
-	if _, err := db.Exec("PRAGMA synchronous = " + strings.ToUpper(synchronous)); err != nil {
+	if _, err := db.ExecContext(ctx, "PRAGMA synchronous = "+strings.ToUpper(synchronous)); err != nil {
 		return fmt.Errorf("apply synchronous: %w", err)
 	}
 	if cfg.BusyTimeout > 0 {
-		if _, err := db.Exec(fmt.Sprintf("PRAGMA busy_timeout = %d", cfg.BusyTimeout)); err != nil {
+		if _, err := db.ExecContext(ctx, fmt.Sprintf("PRAGMA busy_timeout = %d", cfg.BusyTimeout)); err != nil {
 			return fmt.Errorf("apply busy_timeout: %w", err)
 		}
 	}
@@ -63,7 +69,7 @@ func ApplyNamespaceConfig(db *sql.DB, cfg domain.NamespaceConfig) error {
 		// Stored for service-level timeouts, no pragma equivalent needed here.
 	}
 	var pageSize int64
-	if err := db.QueryRow("PRAGMA page_size").Scan(&pageSize); err != nil {
+	if err := db.QueryRowContext(ctx, "PRAGMA page_size").Scan(&pageSize); err != nil {
 		return fmt.Errorf("read page_size: %w", err)
 	}
 	maxPages := int64(0xfffffffe)
@@ -74,21 +80,21 @@ func ApplyNamespaceConfig(db *sql.DB, cfg domain.NamespaceConfig) error {
 		}
 	}
 	var appliedMax int64
-	if err := db.QueryRow(fmt.Sprintf("PRAGMA max_page_count = %d", maxPages)).Scan(&appliedMax); err != nil {
+	if err := db.QueryRowContext(ctx, fmt.Sprintf("PRAGMA max_page_count = %d", maxPages)).Scan(&appliedMax); err != nil {
 		return fmt.Errorf("apply max_db_size: %w", err)
 	}
 	if cfg.MaxDBSize > 0 && appliedMax > maxPages {
 		return fmt.Errorf("%w: current database requires %d bytes", ErrQuotaTooSmall, appliedMax*pageSize)
 	}
-	if _, err := db.Exec(fmt.Sprintf("PRAGMA foreign_keys = %d", boolInt(cfg.ForeignKeysOrDefault()))); err != nil {
+	if _, err := db.ExecContext(ctx, fmt.Sprintf("PRAGMA foreign_keys = %d", boolInt(cfg.ForeignKeysOrDefault()))); err != nil {
 		return fmt.Errorf("apply foreign_keys: %w", err)
 	}
 	if cfg.ReadOnly {
-		if _, err := db.Exec("PRAGMA query_only = 1"); err != nil {
+		if _, err := db.ExecContext(ctx, "PRAGMA query_only = 1"); err != nil {
 			return fmt.Errorf("apply read_only: %w", err)
 		}
 	} else {
-		if _, err := db.Exec("PRAGMA query_only = 0"); err != nil {
+		if _, err := db.ExecContext(ctx, "PRAGMA query_only = 0"); err != nil {
 			return fmt.Errorf("apply read_only: %w", err)
 		}
 	}

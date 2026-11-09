@@ -51,9 +51,15 @@ Stable error codes include:
 | `conflict` | `409` | Name or unique-value conflict |
 | `validation_failed` | `400` | Row does not satisfy schema validation |
 | `sql_not_read_only` | `400` | Query is outside the accepted read-only subset |
+| `sql_forbidden` | `400` | SQL operation is outside the allowed namespace subset |
+| `sql_timeout` | `408` | SQL statement/request exceeded its deadline or was canceled |
+| `sql_limit_exceeded` | `413` | SQL request, parameter, result, or compilation budget exceeded |
 | `quota_exceeded` | `507` | Namespace page quota would be exceeded |
 | `database_busy` | `503` | SQLite could not acquire required access |
 | `internal_error` | `500` | Unexpected server failure |
+
+SQL exec/transaction errors may include a zero-based `statement_index`.
+See [SQL transactions](/en/reference/sql-transactions-api).
 
 Use the machine-readable `error` value in application logic. The human-readable
 `message` may become more specific over time.

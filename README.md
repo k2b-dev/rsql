@@ -10,7 +10,7 @@ It provides:
 
 - namespace provisioning, configuration, duplication, import, and export
 - tables, views, indexes, typed row CRUD, filtering, and CSV export
-- parameterized read-only SQL
+- parameterized SQL reads, writes, and atomic transactions
 - server-sent change events and a schema changelog
 - tenant-facing storage, traffic, latency, contention, and growth statistics
 - Go and TypeScript clients
@@ -23,15 +23,15 @@ Linux distributions.
 Debian 12 or newer:
 
 ```bash
-curl -fLO https://github.com/k2b-dev/rsql/releases/download/v1.0.0/rsql_1.0.0_amd64.deb
-sudo apt install ./rsql_1.0.0_amd64.deb
+curl -fLO https://github.com/k2b-dev/rsql/releases/download/v1.1.0/rsql_1.1.0_amd64.deb
+sudo apt install ./rsql_1.1.0_amd64.deb
 ```
 
 Rocky Linux 9 or newer:
 
 ```bash
-curl -fLO https://github.com/k2b-dev/rsql/releases/download/v1.0.0/rsql-1.0.0-1.x86_64.rpm
-sudo dnf install ./rsql-1.0.0-1.x86_64.rpm
+curl -fLO https://github.com/k2b-dev/rsql/releases/download/v1.1.0/rsql-1.1.0-1.x86_64.rpm
+sudo dnf install ./rsql-1.1.0-1.x86_64.rpm
 ```
 
 The packages install the `rsql` CLI, a hardened systemd unit, and
@@ -43,8 +43,8 @@ sudo systemctl enable --now rsql
 ```
 
 Static Linux and macOS binaries and the
-`ghcr.io/k2b-dev/rsql:1.0.0` container image are also available from the
-[GitHub release](https://github.com/k2b-dev/rsql/releases/tag/v1.0.0).
+`ghcr.io/k2b-dev/rsql:1.1.0` container image are also available from the
+[GitHub release](https://github.com/k2b-dev/rsql/releases/tag/v1.1.0).
 
 ## Run
 
@@ -99,7 +99,7 @@ Start with the [quickstart](./docs/en/quickstart.md), then use the
 ## Clients
 
 ```bash
-go get github.com/k2b-dev/rsql@v1.0.0
+go get github.com/k2b-dev/rsql@v1.1.0
 bun add @k2b/rsql
 ```
 

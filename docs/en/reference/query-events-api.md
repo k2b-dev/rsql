@@ -44,7 +44,15 @@ Batch:
 ```
 
 Batch responses use `{"results":[{"data":[...]},{"data":[...]}]}`. Statements
-execute sequentially. They are not a write transaction.
+execute sequentially. They are not a write transaction. For bound SQL writes and atomic mixed
+transactions, use [SQL writes and transactions](/en/reference/sql-transactions-api).
+
+## SQL writes and transactions
+
+`POST /v1/{ns}/query/exec` commits one bound statement.
+`POST /v1/{ns}/query/transaction` commits or rolls back a group of statements.
+See [SQL writes and transactions](/en/reference/sql-transactions-api) for payloads,
+limits, error indices, and the SQL invalidation events.
 
 ## SSE subscription
 

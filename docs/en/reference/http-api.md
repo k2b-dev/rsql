@@ -40,7 +40,8 @@ See [Namespace API](/en/reference/namespaces-api).
 | Schema | `/v1/{ns}/tables...` |
 | Rows | `/v1/{ns}/tables/{table}/rows...` |
 | CSV | `/v1/{ns}/tables/{table}/export` |
-| SQL | `/v1/{ns}/query` |
+| Read-only SQL | `/v1/{ns}/query` |
+| SQL writes and transactions | `/v1/{ns}/query/exec`, `/v1/{ns}/query/transaction` |
 | SSE | `/v1/{ns}/subscribe` |
 | Changelog | `/v1/{ns}/changelog` |
 | Overview | `/v1/{ns}/overview` |

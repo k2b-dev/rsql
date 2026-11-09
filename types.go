@@ -15,10 +15,11 @@ var (
 
 // APIError is a structured non-2xx rsql response.
 type APIError struct {
-	Status  int
-	Code    string
-	Message string
-	Header  http.Header
+	Status         int
+	Code           string
+	Message        string
+	Header         http.Header
+	StatementIndex *int
 }
 
 func (e *APIError) Error() string {
@@ -143,6 +144,30 @@ type QueryRequest struct {
 	SQL        string           `json:"sql,omitempty"`
 	Params     []any            `json:"params,omitempty"`
 	Statements []QueryStatement `json:"statements,omitempty"`
+}
+
+// TransactionStatement is bound SQL; Mode defaults to exec, query returns rows.
+type TransactionStatement struct {
+	SQL    string `json:"sql"`
+	Params []any  `json:"params,omitempty"`
+	Mode   string `json:"mode,omitempty"`
+}
+
+// ExecResult contains the direct SQLite change count and optional inserted row ID.
+type ExecResult struct {
+	Changes         int64  `json:"changes"`
+	LastInsertRowid *int64 `json:"lastInsertRowid,omitempty"`
+}
+
+// StatementResult contains Data for query mode or ExecResult for exec mode.
+type StatementResult struct {
+	Data *[]map[string]any `json:"data,omitempty"`
+	*ExecResult
+}
+
+// TransactionResult contains ordered results after a successful commit.
+type TransactionResult struct {
+	Results []StatementResult `json:"results"`
 }
 
 // ListMeta describes a paginated row result.

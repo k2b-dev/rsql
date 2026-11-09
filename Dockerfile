@@ -4,7 +4,7 @@
 # CGO_ENABLED=0 lets us produce a fully static build that runs in alpine
 # (or scratch) without libc.
 
-FROM --platform=$BUILDPLATFORM golang:1.23-alpine AS build
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS build
 WORKDIR /src
 
 ARG TARGETOS

@@ -2,6 +2,7 @@ package namespace
 
 import (
 	"container/list"
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -37,7 +38,7 @@ type handle struct {
 	writeDB    *sql.DB
 	poolsMu    sync.Mutex
 	lifecycle  sync.RWMutex
-	writeMu    sync.Mutex
+	writeSlot  chan struct{}
 	lastUsed   int64
 	referenced atomic.Bool
 	element    *list.Element
@@ -265,7 +266,7 @@ func (m *Manager) openHandle(name, path string) (*handle, error) {
 		}
 	}
 
-	h := &handle{name: name, path: path}
+	h := &handle{name: name, path: path, writeSlot: make(chan struct{}, 1)}
 	h.touch()
 	return h, nil
 }
@@ -343,6 +344,11 @@ func (m *Manager) WithRead(name, path string, fn func(*sql.DB) error) error {
 
 // WithWrite executes fn under the pinned namespace write lock.
 func (m *Manager) WithWrite(name, path string, fn func(*sql.DB) error) error {
+	return m.WithWriteContext(context.Background(), name, path, fn)
+}
+
+// WithWriteContext bounds the wait for a namespace writer by ctx.
+func (m *Manager) WithWriteContext(ctx context.Context, name, path string, fn func(*sql.DB) error) error {
 	h, err := m.getOrOpenPinned(name, path)
 	if err != nil {
 		return err
@@ -353,8 +359,15 @@ func (m *Manager) WithWrite(name, path string, fn func(*sql.DB) error) error {
 	}()
 
 	waitStarted := time.Now()
-	h.writeMu.Lock()
-	defer h.writeMu.Unlock()
+	select {
+	case h.writeSlot <- struct{}{}:
+		defer func() { <-h.writeSlot }()
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if m.cfg.OnWriteWait != nil {
 		m.cfg.OnWriteWait(name, time.Since(waitStarted))
 	}

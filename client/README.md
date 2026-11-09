@@ -85,3 +85,25 @@ bun run test:package
 
 Performance profiles are available through `bun run perf:fast` and
 `bun run perf:deep`.
+
+## SQL writes and transactions
+
+```ts
+const db = client.ns("demo");
+const written = await db.query.exec({
+  sql: "INSERT INTO notes(body) VALUES (?)",
+  params: ["bound value"],
+});
+const transaction = await db.query.transaction([
+  { sql: "UPDATE notes SET body=? WHERE id=?", params: ["updated", 12] },
+  { sql: "SELECT * FROM notes WHERE id=?", params: [12], mode: "query" },
+]);
+```
+
+`exec` returns `{ changes, lastInsertRowid? }` inside `RsqlResult`.
+`transaction` returns ordered `{ results }` after commit; a failure rolls back
+all entries and exposes `error.statement_index` (zero-based). `mode` defaults
+to `exec`; use `query` for rows or `RETURNING`. `query.batch` remains read-only
+and non-atomic. Parameters are bound, and server quotas, timeouts, statement,
+request, and result limits apply. See the
+[SQL transaction reference](https://rsql.k2b.dev/en/reference/sql-transactions-api).

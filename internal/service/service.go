@@ -299,13 +299,24 @@ func (s *Service) UpdateNamespaceConfig(name string, cfg domain.NamespaceConfig)
 	}
 
 	err = s.ns.WithWrite(name, rec.DBPath, func(db *sql.DB) error {
+		// Administrative configuration must remain writable while persisting the
+		// new read_only setting. Failed updates discard this pool below.
+		if _, err := db.Exec("PRAGMA query_only=0"); err != nil {
+			return err
+		}
 		if err := sqlite.EnsureInternalSchema(db); err != nil {
 			return err
 		}
-		if err := sqlite.ApplyNamespaceConfig(db, cfg); err != nil {
+		writable := cfg
+		writable.ReadOnly = false
+		if err := sqlite.ApplyNamespaceConfig(db, writable); err != nil {
 			return err
 		}
 		if err := sqlite.PutMeta(db, "namespace_config", "self", cfg); err != nil {
+			return err
+		}
+		if cfg.ReadOnly {
+			_, err := db.Exec("PRAGMA query_only=1")
 			return err
 		}
 		return nil
