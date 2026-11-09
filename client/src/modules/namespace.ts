@@ -4,6 +4,9 @@ import type {
   OverviewWindowName,
   QueryRequest,
   QueryStatement,
+  TransactionStatement,
+  TransactionResult,
+  ExecResult,
   SSESubscribeOptions,
   TableCreateRequest,
   TableUpdateRequest,
@@ -74,6 +77,23 @@ export const createNamespaceModule = (http: HttpClient, namespace: string): Name
           method: "POST",
           headers: jsonHeaders,
           body: JSON.stringify({ statements }),
+        });
+      },
+      exec(statement: QueryStatement) {
+        return http.json<ExecResult>(`${base}/query/exec`, {
+          method: "POST",
+          headers: jsonHeaders,
+          body: JSON.stringify(statement),
+        });
+      },
+      transaction<Row extends Record<string, unknown> = Record<string, unknown>>(
+        statements: TransactionStatement[],
+        options?: { meta?: Record<string, unknown> },
+      ) {
+        return http.json<TransactionResult<Row>>(`${base}/query/transaction`, {
+          method: "POST",
+          headers: jsonHeaders,
+          body: JSON.stringify({ statements, _meta: options?.meta }),
         });
       },
     },

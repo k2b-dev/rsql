@@ -67,3 +67,8 @@ Server configuration controls the process. Each namespace separately stores
 `journal_mode`, `synchronous`, `busy_timeout`, `max_db_size`, `query_timeout`,
 `foreign_keys`, and `read_only`. Manage those through the
 [Namespace API](/en/reference/namespaces-api).
+
+Namespace `journal_mode` accepts SQLite's `delete`, `truncate`, `persist`,
+`memory`, `wal`, and `off` values (case-insensitive). Prefer `wal`; the SQL
+write/transaction routes use defensive SQLite connections and reject `off`.
+Unknown modes are rejected before storing configuration.

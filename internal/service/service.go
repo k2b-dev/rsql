@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"database/sql"
 	"encoding/csv"
 	"encoding/json"
@@ -96,6 +97,13 @@ func defaultNamespaceConfig() domain.NamespaceConfig {
 }
 
 func normalizeNamespaceConfig(cfg domain.NamespaceConfig) (domain.NamespaceConfig, error) {
+	cfg.JournalMode = strings.ToLower(cfg.JournalMode)
+	switch cfg.JournalMode {
+	case "", "delete", "truncate", "persist", "memory", "wal", "off":
+	default:
+		return domain.NamespaceConfig{}, domain.NewError(domain.ErrInvalidRequest, 400, "invalid journal_mode")
+	}
+
 	cfg.Synchronous = strings.ToLower(cfg.Synchronous)
 	if cfg.Synchronous == "" {
 		cfg.Synchronous = "full"
@@ -299,13 +307,24 @@ func (s *Service) UpdateNamespaceConfig(name string, cfg domain.NamespaceConfig)
 	}
 
 	err = s.ns.WithWrite(name, rec.DBPath, func(db *sql.DB) error {
+		// Administrative configuration must remain writable while persisting the
+		// new read_only setting. Failed updates discard this pool below.
+		if _, err := db.Exec("PRAGMA query_only=0"); err != nil {
+			return err
+		}
 		if err := sqlite.EnsureInternalSchema(db); err != nil {
 			return err
 		}
-		if err := sqlite.ApplyNamespaceConfig(db, cfg); err != nil {
+		writable := cfg
+		writable.ReadOnly = false
+		if err := sqlite.ApplyNamespaceConfig(db, writable); err != nil {
 			return err
 		}
 		if err := sqlite.PutMeta(db, "namespace_config", "self", cfg); err != nil {
+			return err
+		}
+		if cfg.ReadOnly {
+			_, err := db.Exec("PRAGMA query_only=1")
 			return err
 		}
 		return nil
@@ -1056,13 +1075,24 @@ func (s *Service) BulkDelete(ns, table string, query map[string][]string, prefer
 
 // Query executes read-only SQL statements.
 func (s *Service) Query(ns string, req sqlite.QueryRequest) (any, error) {
+	return s.QueryContext(context.Background(), ns, req)
+}
+
+// QueryContext propagates client cancellation into the bounded read-only engine.
+func (s *Service) QueryContext(ctx context.Context, ns string, req sqlite.QueryRequest) (any, error) {
+	ctx, cancel := context.WithTimeout(ctx, sqlite.MaxSQLDuration)
+	defer cancel()
 	path, err := s.pathForNamespace(ns)
 	if err != nil {
 		return nil, err
 	}
 	var out any
-	err = s.ns.WithRead(ns, path, func(db *sql.DB) error {
-		result, err := sqlite.ExecuteReadOnly(db, req)
+	err = s.ns.WithReadContext(ctx, ns, path, func(db *sql.DB) error {
+		cfg := defaultNamespaceConfig()
+		if _, err := sqlite.GetMeta(db, "namespace_config", "self", &cfg); err != nil {
+			return err
+		}
+		result, err := sqlite.ExecuteReadOnlyContext(ctx, path, cfg, req)
 		if err != nil {
 			return err
 		}
@@ -1073,7 +1103,7 @@ func (s *Service) Query(ns string, req sqlite.QueryRequest) (any, error) {
 		if strings.Contains(err.Error(), "sql_not_read_only") {
 			return nil, domain.NewError(domain.ErrSQLNotReadOnly, 400, "Only read-only SELECT queries are allowed")
 		}
-		return nil, mapErr(err)
+		return nil, mapSQLError(err)
 	}
 	return out, nil
 }

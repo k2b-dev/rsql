@@ -15,7 +15,7 @@ namespace management from operations bound to one database. The client is safe
 for concurrent use and accepts a custom `http.Client`.
 
 ```bash
-go get github.com/k2b-dev/rsql@v1.0.0
+go get github.com/k2b-dev/rsql@v1.1.0
 ```
 
 ## Create a client
@@ -98,6 +98,27 @@ rows, err := contacts.Rows.List(ctx, map[string][]string{
 A `DatabaseClient` exposes `Overview`, `Query`, `Changelog`, `Events`,
 `Tables`, and `Table(name)`. A `TableClient` exposes `Schema`, `Indexes`,
 `Rows`, and streaming CSV export.
+
+## Execute SQL and atomic transactions
+
+```go
+result, err := db.Query.Exec(ctx, rsql.QueryStatement{
+    SQL: "INSERT INTO notes(body) VALUES (?)",
+    Params: []any{"bound value"},
+})
+
+transaction, err := db.Query.Transaction(ctx, []rsql.TransactionStatement{
+    {SQL: "UPDATE notes SET body=? WHERE id=?", Params: []any{"updated", 12}},
+    {SQL: "SELECT id, body FROM notes WHERE id=?", Params: []any{12}, Mode: "query"},
+})
+```
+
+`Exec` returns `ExecResult{Changes, LastInsertRowid}`. Each transaction result
+contains either `ExecResult` or a `Data` pointer to rows. HTTP failures expose
+`APIError.StatementIndex` when a statement failed. The existing `Run` and
+`Batch` methods remain read-only; `Batch` is not atomic.
+See [SQL transactions](/en/reference/sql-transactions-api) for limits and SQL rules.
+Go 1.26 or newer is required.
 
 ## Handle API errors
 

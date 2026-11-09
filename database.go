@@ -65,7 +65,7 @@ func (o OverviewClient) Get(ctx context.Context, window OverviewWindow) (Namespa
 	return result, err
 }
 
-// QueryClient runs read-only SQL.
+// QueryClient runs bound SQL and atomic transactions.
 type QueryClient struct {
 	database *DatabaseClient
 }
@@ -80,6 +80,23 @@ func (q QueryClient) Run(ctx context.Context, request QueryRequest) (map[string]
 // Batch executes read-only statements in one request.
 func (q QueryClient) Batch(ctx context.Context, statements []QueryStatement) (map[string]any, error) {
 	return q.Run(ctx, QueryRequest{Statements: statements})
+}
+
+// Exec commits one parameterized DDL or DML statement.
+func (q QueryClient) Exec(ctx context.Context, statement QueryStatement) (ExecResult, error) {
+	var result ExecResult
+	err := q.database.client.doJSON(ctx, http.MethodPost, q.database.path("/query/exec"), nil, statement, nil, &result)
+	return result, err
+}
+
+// Transaction executes statements atomically. Query mode returns rows; exec is the default.
+func (q QueryClient) Transaction(ctx context.Context, statements []TransactionStatement) (TransactionResult, error) {
+	var result TransactionResult
+	request := struct {
+		Statements []TransactionStatement `json:"statements"`
+	}{statements}
+	err := q.database.client.doJSON(ctx, http.MethodPost, q.database.path("/query/transaction"), nil, request, nil, &result)
+	return result, err
 }
 
 // ChangelogClient reads schema changes.

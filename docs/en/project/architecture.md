@@ -66,7 +66,9 @@ avoiding a server-wide database lock.
 
 Identifiers are validated before SQL construction. Values use parameters.
 Structured writes validate logical column types. The raw SQL endpoint accepts
-only constrained read-only statements and blocks internal objects.
+constrained read-only statements and blocks internal objects. The separate
+SQL exec and transaction routes use the same namespace writer lock with an
+isolated, authorizer-protected connection and server-enforced budgets.
 
 ## Deployment boundary
 

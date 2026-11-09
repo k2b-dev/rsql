@@ -1,4 +1,5 @@
 export interface ApiErrorBody {
+  statement_index?: number;
   error: string;
   message: string;
 }
@@ -92,6 +93,24 @@ export interface ListResponse<T> {
 export interface QueryStatement {
   sql: string;
   params?: unknown[];
+}
+
+/** Bound SQL; exec is the default, query returns rows (including RETURNING). */
+export interface TransactionStatement extends QueryStatement {
+  mode?: "exec" | "query";
+}
+
+export interface ExecResult {
+  changes: number;
+  lastInsertRowid?: number;
+}
+
+export type StatementResult<Row extends Record<string, unknown> = Record<string, unknown>> =
+  | ExecResult
+  | { data: Row[] };
+
+export interface TransactionResult<Row extends Record<string, unknown> = Record<string, unknown>> {
+  results: StatementResult<Row>[];
 }
 
 export interface QueryRequest {
@@ -324,6 +343,11 @@ export interface NamespaceModule {
   query: {
     run(request: QueryRequest): Promise<RsqlResult<Record<string, unknown>>>;
     batch(statements: QueryStatement[]): Promise<RsqlResult<Record<string, unknown>>>;
+    exec(statement: QueryStatement): Promise<RsqlResult<ExecResult>>;
+    transaction<Row extends Record<string, unknown> = Record<string, unknown>>(
+      statements: TransactionStatement[],
+      options?: { meta?: Record<string, unknown> },
+    ): Promise<RsqlResult<TransactionResult<Row>>>;
   };
   changelog: {
     list(options?: { table?: string; limit?: number; offset?: number }): Promise<RsqlResult<ChangelogEntry[]>>;

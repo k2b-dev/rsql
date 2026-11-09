@@ -62,7 +62,7 @@ jobs:
       - uses: actions/setup-go@v7
         if: steps.registry.outputs.publish == 'true'
         with:
-          go-version: "1.23"
+          go-version: "1.26"
           cache: true
 
       - name: download Go modules

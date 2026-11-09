@@ -28,8 +28,8 @@ func TestCommonHelpersAndMeta(t *testing.T) {
 	if boolInt(true) != 1 || boolInt(false) != 0 {
 		t.Fatalf("unexpected boolInt")
 	}
-	if quotePragmaValue("w'al") != "'wal'" {
-		t.Fatalf("unexpected quoted pragma")
+	if err := ApplyNamespaceConfig(db, domain.NamespaceConfig{JournalMode: "wal'; ATTACH DATABASE 'escape' AS other"}); err == nil {
+		t.Fatal("expected journal mode outside the allowlist to be rejected")
 	}
 	if err := validateIdentifier("valid_1"); err != nil {
 		t.Fatalf("validate identifier: %v", err)

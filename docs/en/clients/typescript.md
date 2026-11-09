@@ -71,6 +71,32 @@ console.log(result.data);
 
 Network and runtime failures may still reject the promise.
 
+## Execute SQL and atomic transactions
+
+```ts
+const db = client.ns("demo");
+const written = await db.query.exec({
+  sql: "INSERT INTO notes(body) VALUES (?)",
+  params: ["bound value"],
+});
+
+const transaction = await db.query.transaction<{ id: number; body: string }>([
+  { sql: "UPDATE notes SET body=? WHERE id=?", params: ["updated", 12] },
+  { sql: "SELECT id, body FROM notes WHERE id=?", params: [12], mode: "query" },
+]);
+
+if (!transaction.ok) {
+  console.error(transaction.error.error, transaction.error.statement_index);
+}
+```
+
+`exec` returns `RsqlResult<ExecResult>` with `changes` and optional
+`lastInsertRowid`. `transaction` returns `RsqlResult<TransactionResult<Row>>`;
+its ordered `results` contain either an execution result or `{ data: Row[] }`.
+Pass `{ meta: { actor: "user-1" } }` as the second argument for event metadata.
+The existing `run` and `batch` methods remain read-only; `batch` is not atomic.
+See [SQL transactions](/en/reference/sql-transactions-api) for limits and SQL rules.
+
 ## Default client
 
 The exported `rsql` client reads `RSQL_URL` and `RSQL_API_TOKEN` only when it is

@@ -90,3 +90,10 @@ WAL and SHM bytes are reported but are not included in the hard page quota.
   the active file.
 - CSV import maps header fields to row payloads and uses normal row insertion.
 - Table CSV export streams RFC 4180 output and shares row filters.
+
+## Bound writes and atomic transactions (1.1+)
+
+Use `/query/exec` for a single bound statement and `/query/transaction` for an
+atomic group. See `sql-transactions.md` for the complete contract, budgets,
+SQL subset, events, and error indices. The older `/query` batch stays read-only
+and sequential.

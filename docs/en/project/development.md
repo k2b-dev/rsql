@@ -10,6 +10,9 @@ updated: 2026-09-10
 
 # Development
 
+Go 1.26 or newer is required. The SQLite driver exposes the connection
+authorizer used by the SQL transaction API.
+
 ## Build and run
 
 ```bash
@@ -70,7 +73,7 @@ Install the pinned nFPM release, then build into a new output directory:
 
 ```bash
 go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.42.1
-./scripts/build-release.sh v1.0.0 /tmp/rsql-release
+./scripts/build-release.sh v1.1.0 /tmp/rsql-release
 ```
 
 The tag workflow installs the generated packages on Debian and Rocky Linux

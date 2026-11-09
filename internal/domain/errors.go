@@ -17,15 +17,19 @@ const (
 	ErrSQLNotReadOnly    ErrorCode = "sql_not_read_only"
 	ErrQuotaExceeded     ErrorCode = "quota_exceeded"
 	ErrDatabaseBusy      ErrorCode = "database_busy"
+	ErrSQLForbidden      ErrorCode = "sql_forbidden"
+	ErrSQLTimeout        ErrorCode = "sql_timeout"
+	ErrSQLLimitExceeded  ErrorCode = "sql_limit_exceeded"
 	ErrInternal          ErrorCode = "internal_error"
 )
 
 // Error represents a structured service error.
 type Error struct {
-	Code       ErrorCode
-	Message    string
-	HTTPStatus int
-	Cause      error
+	Code           ErrorCode
+	Message        string
+	HTTPStatus     int
+	Cause          error
+	StatementIndex *int
 }
 
 func (e *Error) Error() string {

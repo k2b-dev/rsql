@@ -552,3 +552,39 @@ const withServer = async (run: (server: RunningServer) => Promise<void>): Promis
     await server.stop();
   }
 };
+
+// Fixed namespaces isolate this fixture inside its own server and data directory.
+test("bound SQL exec, mixed atomic transaction, and indexed rollback", async () => {
+  await withServer(async (running) => {
+    const client = createRsqlClient({ url: running.url, token: running.token });
+    await expectOk(client.namespaces.create({ name: "sql_one" }));
+    await expectOk(client.namespaces.create({ name: "sql_two" }));
+    const db = client.ns("sql_one");
+    expect(await expectOk(db.query.exec({ sql: "CREATE TABLE records(id INTEGER PRIMARY KEY,value TEXT UNIQUE)" }))).toEqual({ changes: 0 });
+    const value = "x'); DROP TABLE records; --";
+    expect(await expectOk(db.query.exec({ sql: "INSERT INTO records(value) VALUES(?)", params: [value] }))).toEqual({ changes: 1, lastInsertRowid: 1 });
+    const out = await expectOk(db.query.transaction<{ value: string }>([
+      { sql: "UPDATE records SET value=? WHERE id=?", params: ["updated", 1] },
+      { sql: "SELECT value FROM records WHERE id=?", params: [1], mode: "query" },
+    ]));
+    expect(out.results).toEqual([{ changes: 1 }, { data: [{ value: "updated" }] }]);
+    const failed = await db.query.transaction([
+      { sql: "INSERT INTO records(value) VALUES(?)", params: ["rollback"] },
+      { sql: "INSERT INTO records(value) VALUES(?)", params: ["updated"] },
+    ]);
+    expect(failed.ok).toBe(false);
+    if (!failed.ok) {
+      expect(failed.error.error).toBe("conflict");
+      expect(failed.error.statement_index).toBe(1);
+    }
+    const check = await expectOk(db.query.transaction([{ sql: "SELECT COUNT(*) AS count FROM records", mode: "query" }]));
+    expect(check.results).toEqual([{ data: [{ count: 1 }] }]);
+    const forbidden = await db.query.exec({ sql: "ATTACH DATABASE ? AS attached", params: [":memory:"] });
+    expect(forbidden.ok).toBe(false);
+    if (!forbidden.ok) expect(forbidden.error.error).toBe("sql_forbidden");
+    const other = await client.ns("sql_two").query.transaction([{ sql: "SELECT * FROM records", mode: "query" }]);
+    expect(other.ok).toBe(false);
+    // Existing query.batch remains the read-only convenience API.
+    expect((await expectOk(db.query.batch([{ sql: "SELECT COUNT(*) AS count FROM records" }]))).results).toEqual([{ data: [{ count: 1 }] }]);
+  });
+});

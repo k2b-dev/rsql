@@ -86,7 +86,14 @@ Database and CSV imports remain administrative operations.
 
 - Prefer row APIs for ordinary application CRUD.
 - Use the shared filter grammar for lists, bulk mutations, and CSV export.
-- Use parameterized read-only SQL for joins and aggregates.
+- Use parameterized read-only SQL for joins and aggregates. Read-only queries
+  share SQL authorization, deadlines, and result budgets with transactions.
+- Use `query.exec({ sql, params })` for bound writes and `query.transaction` for
+  atomic statements. Transaction entries default to `mode: "exec"`; use
+  `mode: "query"` for rows or `RETURNING`. Never emulate a transaction with
+  `query.batch`, which remains a sequential read-only API.
+- See `references/sql-transactions.md` before raw SQL writes: authorizer rules,
+  quotas, server budgets, indexed errors, and commit-only invalidation events.
 - Create FTS indexes for large user-facing search workloads.
 - Treat SSE as live notification delivery, not a durable queue.
 
@@ -99,6 +106,9 @@ Expected failures use JSON with `error` and `message`. Important codes include:
 - `table_not_found`
 - `validation_failed`
 - `sql_not_read_only`
+- `sql_forbidden`
+- `sql_timeout`
+- `sql_limit_exceeded`
 - `quota_exceeded`
 - `database_busy`
 

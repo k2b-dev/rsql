@@ -44,7 +44,7 @@ pull-based SSE iterator without hidden goroutines.
 data-plane roots:
 
 - `/tables`
-- `/query`
+- `/query`, `/query/exec`, `/query/transaction`
 - `/subscribe`
 - `/changelog`
 - `/overview`
@@ -93,3 +93,15 @@ access, not at import time, so the package remains browser-loadable.
 - In a browser, use an explicit TypeScript client against an authenticated
   gateway and never expose `RSQL_API_TOKEN`.
 - Use direct HTTP when another language or a thin integration is sufficient.
+
+## SQL transactions
+
+Go: `db.Query.Exec(ctx, QueryStatement{SQL: sql, Params: params})` returns
+`ExecResult`. `db.Query.Transaction(ctx, []TransactionStatement{...})` returns
+`TransactionResult`. `APIError.StatementIndex` is an optional zero-based index.
+
+TypeScript: `db.query.exec({ sql, params })` returns `RsqlResult<ExecResult>`.
+`db.query.transaction<Row>(statements, { meta })` returns
+`RsqlResult<TransactionResult<Row>>`; errors preserve `statement_index`.
+Entries default to exec; set `mode: "query"` for rows. Never interpolate values.
+Read `sql-transactions.md` for SQL and resource limits.

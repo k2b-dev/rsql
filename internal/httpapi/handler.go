@@ -148,6 +148,14 @@ func (h *apiHandler) handleNamespaces(w http.ResponseWriter, r *http.Request, pa
 
 func (h *apiHandler) handleNamespaceScoped(w http.ResponseWriter, r *http.Request, parts []string) {
 	ns := parts[0]
+	if len(parts) == 3 && parts[1] == "query" && (parts[2] == "exec" || parts[2] == "transaction") {
+		if r.Method != http.MethodPost {
+			methodNotAllowed(w)
+			return
+		}
+		h.writeSQL(w, r, ns, parts[2])
+		return
+	}
 	if len(parts) == 2 {
 		switch parts[1] {
 		case "query":
@@ -653,17 +661,77 @@ func (h *apiHandler) bulkDeleteRows(w http.ResponseWriter, r *http.Request, ns, 
 }
 
 func (h *apiHandler) query(w http.ResponseWriter, r *http.Request, ns string) {
+	r.Body = http.MaxBytesReader(w, r.Body, sqlite.MaxSQLRequestBytes)
 	var req sqlite.QueryRequest
-	if err := decodeJSONBody(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+	if err := decodeSQLBody(r, &req); err != nil {
+		var size *http.MaxBytesError
+		if errors.As(err, &size) {
+			writeError(w, 413, "sql_limit_exceeded", "SQL request exceeds 1 MiB")
+		} else {
+			writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		}
 		return
 	}
-	result, err := h.service.Query(ns, req)
+	result, err := h.service.QueryContext(r.Context(), ns, req)
 	if err != nil {
 		writeServiceError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+func decodeSQLBody(r *http.Request, dst any) error {
+	if ct := r.Header.Get("Content-Type"); ct != "" {
+		mediaType, _, _ := mime.ParseMediaType(ct)
+		if mediaType != "application/json" && !strings.HasSuffix(mediaType, "+json") {
+			return fmt.Errorf("content-type must be application/json")
+		}
+	}
+	decoder := json.NewDecoder(r.Body)
+	decoder.UseNumber()
+	if err := decoder.Decode(dst); err != nil {
+		return err
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		if err != nil {
+			return err
+		}
+		return fmt.Errorf("expected one JSON object")
+	}
+	return nil
+}
+
+func (h *apiHandler) writeSQL(w http.ResponseWriter, r *http.Request, ns, operation string) {
+	r.Body = http.MaxBytesReader(w, r.Body, sqlite.MaxSQLRequestBytes)
+	var result any
+	var err error
+	if operation == "exec" {
+		var req sqlite.TransactionStatement
+		err = decodeSQLBody(r, &req)
+		if err == nil {
+			result, err = h.service.ExecSQL(r.Context(), ns, req)
+		}
+	} else {
+		var req sqlite.TransactionRequest
+		err = decodeSQLBody(r, &req)
+		if err == nil {
+			result, err = h.service.Transaction(r.Context(), ns, req)
+		}
+	}
+	if err != nil {
+		var size *http.MaxBytesError
+		var serviceErr *domain.Error
+		if errors.As(err, &serviceErr) {
+			writeServiceError(w, err)
+		} else if errors.As(err, &size) {
+			writeError(w, 413, "sql_limit_exceeded", "SQL request exceeds 1 MiB")
+		} else {
+			writeError(w, 400, "invalid_request", err.Error())
+		}
+		return
+	}
+	writeJSON(w, 200, result)
 }
 
 func (h *apiHandler) subscribe(w http.ResponseWriter, r *http.Request, ns string) {
@@ -798,6 +866,9 @@ func classifyNamespaceRequest(r *http.Request) (string, string, bool) {
 	resource := parts[2]
 	switch resource {
 	case "query":
+		if len(parts) == 4 && (parts[3] == "exec" || parts[3] == "transaction") {
+			return namespace, "query." + parts[3], true
+		}
 		return namespace, "query.run", true
 	case "subscribe":
 		return namespace, "events.subscribe", true
@@ -923,7 +994,11 @@ func writeError(w http.ResponseWriter, status int, code, message string) {
 func writeServiceError(w http.ResponseWriter, err error) {
 	var derr *domain.Error
 	if errors.As(err, &derr) {
-		writeError(w, derr.HTTPStatus, string(derr.Code), derr.Message)
+		if derr.StatementIndex != nil {
+			writeJSON(w, derr.HTTPStatus, map[string]any{"error": derr.Code, "message": derr.Message, "statement_index": *derr.StatementIndex})
+		} else {
+			writeError(w, derr.HTTPStatus, string(derr.Code), derr.Message)
+		}
 		return
 	}
 	writeError(w, http.StatusInternalServerError, string(domain.ErrInternal), "Internal server error")

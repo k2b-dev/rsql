@@ -1,6 +1,6 @@
 {
   "name": "@k2b/rsql",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Type-safe fetch client for rsql",
   "type": "module",
   "license": "MIT",

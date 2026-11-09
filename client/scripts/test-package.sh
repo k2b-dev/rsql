@@ -21,7 +21,7 @@ npm install "$package_root/$archive" \
   --silent
 
 cat > "$work_dir/smoke.ts" <<'EOF'
-import { createRsqlClient, rsql, type RsqlClient } from "@k2b/rsql";
+import { createRsqlClient, rsql, type RsqlClient, type ExecResult, type TransactionResult } from "@k2b/rsql";
 
 const client: RsqlClient = createRsqlClient({
   url: "https://rsql.example",
@@ -32,6 +32,14 @@ const client: RsqlClient = createRsqlClient({
       headers: { "content-type": "application/json" },
     }),
 });
+
+const db = client.ns("packed");
+if (typeof db.query.exec !== "function" || typeof db.query.transaction !== "function") {
+  throw new Error("SQL write APIs are missing from the packed client");
+}
+const execution: ExecResult = { changes: 1 };
+const transaction: TransactionResult = { results: [execution, { data: [] }] };
+if (transaction.results.length !== 2) throw new Error("SQL result types are missing");
 
 if (typeof rsql !== "object") {
   throw new Error("default client export is missing");

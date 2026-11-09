@@ -1,9 +1,14 @@
 package sqlite
 
 import (
+	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
+
+	"github.com/k2b-dev/rsql/internal/domain"
 )
 
 var forbiddenSQLKeywords = map[string]struct{}{
@@ -35,41 +40,70 @@ type QueryRequest struct {
 	Statements []QueryStatement `json:"statements"`
 }
 
-// ExecuteReadOnly executes read-only SQL statements.
+// ExecuteReadOnly preserves the internal convenience entry point. Service calls
+// use ExecuteReadOnlyContext to propagate request cancellation and configuration.
 func ExecuteReadOnly(db *sql.DB, req QueryRequest) (any, error) {
-	if len(req.Statements) > 0 {
-		out := make([]map[string]any, 0, len(req.Statements))
-		for _, st := range req.Statements {
-			rows, err := executeReadOnlyStatement(db, st.SQL, st.Params)
-			if err != nil {
-				return nil, err
-			}
-			out = append(out, map[string]any{"data": rows})
-		}
-		return map[string]any{"results": out}, nil
+	var seq int
+	var name, path string
+	if err := db.QueryRow("PRAGMA database_list").Scan(&seq, &name, &path); err != nil {
+		return nil, err
 	}
+	return ExecuteReadOnlyContext(context.Background(), path, domain.NamespaceConfig{}, req)
+}
 
-	rows, err := executeReadOnlyStatement(db, req.SQL, req.Params)
+// ExecuteReadOnlyContext keeps the legacy response and non-atomic batch contract
+// while using the same connection policy, deadlines and budgets as transactions.
+func ExecuteReadOnlyContext(ctx context.Context, path string, cfg domain.NamespaceConfig, req QueryRequest) (any, error) {
+	ctx, cancel := context.WithTimeout(ctx, MaxSQLDuration)
+	defer cancel()
+	encoded, err := json.Marshal(req)
+	if err != nil || len(encoded) > MaxSQLRequestBytes || len(req.Statements) > MaxTransactionStatements {
+		return nil, domain.NewError(domain.ErrSQLLimitExceeded, 413, "SQL request exceeds limit")
+	}
+	statements := req.Statements
+	batch := len(statements) > 0
+	if !batch {
+		statements = []QueryStatement{{SQL: req.SQL, Params: req.Params}}
+	}
+	for _, st := range statements {
+		if !isReadOnlyQuery(st.SQL) || referencesInternalObject(st.SQL) {
+			return nil, fmt.Errorf("sql_not_read_only")
+		}
+		if err := validateSQLStatement(TransactionStatement{SQL: st.SQL, Params: st.Params, Mode: "query"}); err != nil {
+			return nil, err
+		}
+	}
+	db, conn, policy, err := openSQLConnection(ctx, path, cfg, true)
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{"data": rows}, nil
-}
-
-func executeReadOnlyStatement(db *sql.DB, query string, params []any) ([]map[string]any, error) {
-	if !isReadOnlyQuery(query) {
-		return nil, fmt.Errorf("sql_not_read_only")
+	defer db.Close()
+	defer conn.Close()
+	budget := resultBudget{bytes: MaxSQLResultBytes, rows: MaxSQLResultRows}
+	timeout := 10 * time.Second
+	if cfg.QueryTimeout > 0 {
+		timeout = time.Duration(min(cfg.QueryTimeout, int(MaxSQLDuration/time.Millisecond))) * time.Millisecond
 	}
-	if referencesInternalObject(query) {
-		return nil, fmt.Errorf("sql_not_read_only")
+	out := make([]map[string]any, 0, len(statements))
+	for _, st := range statements {
+		statementCtx, cancel := context.WithTimeout(ctx, timeout)
+		result, err := executeSQLStatement(statementCtx, conn, policy, TransactionStatement{SQL: st.SQL, Params: st.Params, Mode: "query"}, &budget)
+		if statementCtx.Err() != nil {
+			err = domain.NewError(domain.ErrSQLTimeout, 408, "SQL statement deadline exceeded")
+		}
+		cancel()
+		if err != nil {
+			if policy.denied {
+				return nil, domain.NewError(domain.ErrSQLNotReadOnly, 400, "Only permitted read-only SELECT queries are allowed")
+			}
+			return nil, err
+		}
+		out = append(out, map[string]any{"data": *result.Data})
 	}
-
-	rows, err := db.Query(query, params...)
-	if err != nil {
-		return nil, fmt.Errorf("query execution failed: %w", err)
+	if batch {
+		return map[string]any{"results": out}, nil
 	}
-	defer rows.Close()
-	return scanRows(rows)
+	return out[0], nil
 }
 
 func isReadOnlyQuery(q string) bool {

@@ -22,6 +22,13 @@ pragmas, attachments, and references to internal objects are rejected.
 The endpoint is intended for joins and aggregations that do not fit the row-list
 grammar. It is not a general SQLite administration endpoint.
 
+## SQL writes and atomic transactions
+
+Use `/query/exec` for a bound write and `/query/transaction` for atomic reads
+and writes. A failure rolls back every statement. Server limits bound request
+and result sizes, statement counts, and execution time.
+See [SQL transactions](/en/reference/sql-transactions-api).
+
 ## Change events
 
 `GET /v1/{namespace}/subscribe` opens an SSE stream. The optional `tables`

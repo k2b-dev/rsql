@@ -5,7 +5,7 @@ section: API Reference
 order: 160
 description: Execute read-only SQL, subscribe to changes, inspect schema history, and read namespace health.
 tags: [api, sql, sse, overview]
-updated: 2026-07-26
+updated: 2026-11-09
 ---
 
 # Query, Events, and Overview API
@@ -44,7 +44,18 @@ Batch:
 ```
 
 Batch responses use `{"results":[{"data":[...]},{"data":[...]}]}`. Statements
-execute sequentially. They are not a write transaction.
+execute sequentially and remain non-atomic. Queries accept bound positional
+parameters and run under the namespace SQL authorizer, execution deadlines,
+and input/result budgets described in
+[SQL writes and transactions](/en/reference/sql-transactions-api). Use those
+routes for writes and atomic mixed transactions.
+
+## SQL writes and transactions
+
+`POST /v1/{ns}/query/exec` commits one bound statement.
+`POST /v1/{ns}/query/transaction` commits or rolls back a group of statements.
+See [SQL writes and transactions](/en/reference/sql-transactions-api) for payloads,
+limits, error indices, and the SQL invalidation events.
 
 ## SSE subscription
 

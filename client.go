@@ -211,17 +211,19 @@ func checkResponse(response *http.Response) error {
 	defer response.Body.Close()
 	limited := io.LimitReader(response.Body, 1<<20)
 	var payload struct {
-		Code    string `json:"error"`
-		Message string `json:"message"`
+		Code           string `json:"error"`
+		Message        string `json:"message"`
+		StatementIndex *int   `json:"statement_index"`
 	}
 	if err := json.NewDecoder(limited).Decode(&payload); err != nil {
 		payload.Code = "unknown_error"
 		payload.Message = response.Status
 	}
 	return &APIError{
-		Status:  response.StatusCode,
-		Code:    payload.Code,
-		Message: payload.Message,
-		Header:  response.Header.Clone(),
+		Status:         response.StatusCode,
+		Code:           payload.Code,
+		Message:        payload.Message,
+		Header:         response.Header.Clone(),
+		StatementIndex: payload.StatementIndex,
 	}
 }
