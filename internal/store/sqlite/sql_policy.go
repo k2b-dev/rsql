@@ -12,10 +12,11 @@ import (
 )
 
 type sqlPolicy struct {
-	control, checking, dml, insert, schema, denied, internalWrite bool
-	changes                                                       map[string]bool
-	existing                                                      map[string]bool
-	managed                                                       map[string]bool
+	control, checking, dml, insert, schema, denied, internalWrite, readOnly bool
+	changes                                                                 map[string]bool
+	existing                                                                map[string]bool
+	managed                                                                 map[string]bool
+	managedSQL                                                              map[string]string
 }
 
 // Explicit built-in allowlist: new extension or filesystem functions are denied
@@ -54,6 +55,9 @@ func (p *sqlPolicy) authorize(action driver.AuthorizerActionCode, a, b, db, sour
 		return driver.AuthorizerOK
 	}
 	allow := false
+	if p.readOnly && action != driver.AuthSelect && action != driver.AuthRecursive && action != driver.AuthRead && action != driver.AuthFunction && action != driver.AuthPragma {
+		return p.deny()
+	}
 	// ALTER TABLE checks the isolated, empty TEMP catalog as part of rename. It also
 	// issues an UPDATE against that catalog; clients cannot create TEMP objects.
 	if p.schema && db == "temp" && a == "sqlite_temp_master" && (action == driver.AuthRead || action == driver.AuthUpdate) {
@@ -70,7 +74,7 @@ func (p *sqlPolicy) authorize(action driver.AuthorizerActionCode, a, b, db, sour
 	case driver.AuthFunction:
 		allow = sqlFunctions[strings.ToLower(b)]
 	case driver.AuthRead:
-		allow = sqlObject(a) || a == "sqlite_master" || a == "sqlite_schema" || (a == "sqlite_sequence" && p.schema)
+		allow = (sqlObject(a) && (p.existing[a] || hasSQLChange(p.changes, a) || a == "json_each" || a == "json_tree")) || a == "sqlite_master" || a == "sqlite_schema" || (a == "sqlite_sequence" && p.schema)
 	case driver.AuthInsert, driver.AuthUpdate, driver.AuthDelete:
 		// SQLite itself writes its schema catalog for DDL. Defensive mode prevents
 		// explicit catalog mutation, and writable_schema cannot be enabled.
@@ -86,18 +90,18 @@ func (p *sqlPolicy) authorize(action driver.AuthorizerActionCode, a, b, db, sour
 			}
 		}
 	case driver.AuthCreateTable, driver.AuthCreateView, driver.AuthDropTable, driver.AuthDropView:
-		allow = sqlObject(a) && !p.managed[a]
+		allow = sqlObject(a) && !p.managed[strings.ToLower(a)]
 		if allow {
 			p.recordSchema(a)
 		}
 	case driver.AuthCreateIndex, driver.AuthDropIndex:
 		// SQLite-generated UNIQUE/PRIMARY KEY indexes are harmless catalog entries.
-		allow = (sqlObject(a) || strings.HasPrefix(a, "sqlite_autoindex_")) && sqlObject(b)
+		allow = (sqlObject(a) || strings.HasPrefix(a, "sqlite_autoindex_")) && sqlObject(b) && !p.managed[strings.ToLower(b)]
 		if allow {
 			p.recordSchema(b)
 		}
 	case driver.AuthAlterTable:
-		allow = a == "main" && sqlObject(b) && !p.managed[b]
+		allow = a == "main" && sqlObject(b) && !p.managed[strings.ToLower(b)]
 		if allow {
 			p.recordSchema(b)
 		}
@@ -117,6 +121,11 @@ func (p *sqlPolicy) authorize(action driver.AuthorizerActionCode, a, b, db, sour
 		return p.deny()
 	}
 	return driver.AuthorizerOK
+}
+
+func hasSQLChange(changes map[string]bool, name string) bool {
+	_, ok := changes[name]
+	return ok
 }
 
 func (p *sqlPolicy) deny() driver.AuthorizerReturnCode { p.denied = true; return driver.AuthorizerDeny }
@@ -151,18 +160,21 @@ func (p *sqlPolicy) sqlError(err error) error {
 }
 
 func loadSQLPolicy(ctx context.Context, conn *sql.Conn) (*sqlPolicy, error) {
-	p := &sqlPolicy{changes: make(map[string]bool), existing: make(map[string]bool), managed: make(map[string]bool)}
-	rows, err := conn.QueryContext(ctx, `SELECT name FROM sqlite_schema`)
+	p := &sqlPolicy{changes: make(map[string]bool), existing: make(map[string]bool), managed: make(map[string]bool), managedSQL: make(map[string]string)}
+	rows, err := conn.QueryContext(ctx, `SELECT name,tbl_name,coalesce(sql,'') FROM sqlite_schema`)
 	if err != nil {
 		return nil, err
 	}
+	type object struct{ name, table, sql string }
+	var objects []object
 	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
+		var o object
+		if err := rows.Scan(&o.name, &o.table, &o.sql); err != nil {
 			rows.Close()
 			return nil, err
 		}
-		p.existing[name] = true
+		p.existing[o.name] = true
+		objects = append(objects, o)
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err
@@ -180,9 +192,17 @@ func loadSQLPolicy(ctx context.Context, conn *sql.Conn) (*sqlPolicy, error) {
 		if err := rows.Scan(&name); err != nil {
 			return nil, err
 		}
-		p.managed[name] = true
+		p.managed[strings.ToLower(name)] = true
 	}
-	return p, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for _, o := range objects {
+		if p.managed[strings.ToLower(o.table)] {
+			p.managedSQL[o.name] = o.sql
+		}
+	}
+	return p, nil
 }
 
 // SQLite defers compiling view bodies, defaults, CHECKs and foreign keys.
@@ -191,16 +211,26 @@ func loadSQLPolicy(ctx context.Context, conn *sql.Conn) (*sqlPolicy, error) {
 func validateSQLSchema(ctx context.Context, conn *sql.Conn, p *sqlPolicy) error {
 	p.checking = true
 	defer func() { p.checking = false }()
-	rows, err := conn.QueryContext(ctx, `SELECT type,name FROM sqlite_schema WHERE type IN ('table','view')`)
+	rows, err := conn.QueryContext(ctx, `SELECT type,name,tbl_name,coalesce(sql,'') FROM sqlite_schema`)
 	if err != nil {
 		return p.sqlError(err)
 	}
 	var tables, views []string
+	seen := make(map[string]bool)
 	for rows.Next() {
-		var typ, name string
-		if err := rows.Scan(&typ, &name); err != nil {
+		var typ, name, owner, definition string
+		if err := rows.Scan(&typ, &name, &owner, &definition); err != nil {
 			rows.Close()
 			return err
+		}
+		seen[name] = true
+		original, managed := p.managedSQL[name]
+		if (managed && definition != original) || (!managed && p.managed[strings.ToLower(owner)]) {
+			rows.Close()
+			return domain.NewError(domain.ErrSQLForbidden, 400, "SQL cannot change structured schema definitions")
+		}
+		if typ != "table" && typ != "view" {
+			continue
 		}
 		if strings.HasPrefix(name, "_") {
 			if !p.existing[name] {
@@ -212,10 +242,7 @@ func validateSQLSchema(ctx context.Context, conn *sql.Conn, p *sqlPolicy) error 
 		if strings.HasPrefix(name, "sqlite_") {
 			continue
 		}
-		if !sqlObject(name) || p.managed[name] {
-			if p.managed[name] {
-				continue
-			}
+		if !sqlObject(name) {
 			rows.Close()
 			return domain.NewError(domain.ErrSQLForbidden, 400, "invalid SQL object name")
 		}
@@ -233,6 +260,11 @@ func validateSQLSchema(ctx context.Context, conn *sql.Conn, p *sqlPolicy) error 
 	}
 	if err := rows.Err(); err != nil {
 		return err
+	}
+	for name := range p.managedSQL {
+		if !seen[name] {
+			return domain.NewError(domain.ErrSQLForbidden, 400, "SQL cannot remove structured schema objects")
+		}
 	}
 	prepare := func(query string) error {
 		stmt, err := conn.PrepareContext(ctx, query)
@@ -254,9 +286,11 @@ func validateSQLSchema(ctx context.Context, conn *sql.Conn, p *sqlPolicy) error 
 	}
 	for _, table := range tables {
 		name := quotedIdentifier(table)
-		for _, q := range []string{"EXPLAIN INSERT INTO " + name + " DEFAULT VALUES", "EXPLAIN DELETE FROM " + name} {
-			if err := prepare(q); err != nil {
-				return err
+		if !p.managed[strings.ToLower(table)] {
+			for _, q := range []string{"EXPLAIN INSERT INTO " + name + " DEFAULT VALUES", "EXPLAIN DELETE FROM " + name} {
+				if err := prepare(q); err != nil {
+					return err
+				}
 			}
 		}
 		fk, err := conn.QueryContext(ctx, "PRAGMA foreign_key_list("+name+")")
@@ -271,7 +305,7 @@ func validateSQLSchema(ctx context.Context, conn *sql.Conn, p *sqlPolicy) error 
 				fk.Close()
 				return err
 			}
-			if !sqlObject(target) {
+			if !sqlObject(target) || (p.managed[strings.ToLower(table)] && !seen[target]) {
 				fk.Close()
 				return domain.NewError(domain.ErrSQLForbidden, 400, "foreign keys cannot reference internal objects")
 			}

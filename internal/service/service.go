@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"database/sql"
 	"encoding/csv"
 	"encoding/json"
@@ -1074,13 +1075,22 @@ func (s *Service) BulkDelete(ns, table string, query map[string][]string, prefer
 
 // Query executes read-only SQL statements.
 func (s *Service) Query(ns string, req sqlite.QueryRequest) (any, error) {
+	return s.QueryContext(context.Background(), ns, req)
+}
+
+// QueryContext propagates client cancellation into the bounded read-only engine.
+func (s *Service) QueryContext(ctx context.Context, ns string, req sqlite.QueryRequest) (any, error) {
 	path, err := s.pathForNamespace(ns)
 	if err != nil {
 		return nil, err
 	}
 	var out any
 	err = s.ns.WithRead(ns, path, func(db *sql.DB) error {
-		result, err := sqlite.ExecuteReadOnly(db, req)
+		cfg := defaultNamespaceConfig()
+		if _, err := sqlite.GetMeta(db, "namespace_config", "self", &cfg); err != nil {
+			return err
+		}
+		result, err := sqlite.ExecuteReadOnlyContext(ctx, path, cfg, req)
 		if err != nil {
 			return err
 		}

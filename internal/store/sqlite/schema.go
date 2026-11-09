@@ -1,6 +1,7 @@
 package sqlite
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -196,7 +197,12 @@ func CreateTableOrView(db *sql.DB, req domain.TableCreateRequest) error {
 		return fmt.Errorf("table names with _ prefix are reserved")
 	}
 
-	tx, err := db.Begin()
+	conn, err := db.Conn(context.Background())
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	tx, err := conn.BeginTx(context.Background(), nil)
 	if err != nil {
 		return fmt.Errorf("begin create table/view: %w", err)
 	}
@@ -235,6 +241,9 @@ func CreateTableOrView(db *sql.DB, req domain.TableCreateRequest) error {
 	case "view":
 		if strings.TrimSpace(req.SQL) == "" {
 			return fmt.Errorf("view sql must not be empty")
+		}
+		if err := validateViewSQL(conn, req.SQL); err != nil {
+			return err
 		}
 		schema.SQL = req.SQL
 		schema.SourceTables = extractSourceTables(req.SQL)
@@ -516,7 +525,12 @@ func UpdateTableOrView(db *sql.DB, name string, req domain.TableUpdateRequest) e
 	}
 	typ := obj["type"].(string)
 
-	tx, err := db.Begin()
+	conn, err := db.Conn(context.Background())
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	tx, err := conn.BeginTx(context.Background(), nil)
 	if err != nil {
 		return fmt.Errorf("begin update table/view: %w", err)
 	}
@@ -551,6 +565,9 @@ func UpdateTableOrView(db *sql.DB, name string, req domain.TableUpdateRequest) e
 		if req.Rename != "" || strings.TrimSpace(req.SQL) != "" {
 			if newSQL == "" {
 				return fmt.Errorf("invalid view update: rename without an existing or new sql is not possible")
+			}
+			if err := validateViewSQL(conn, newSQL); err != nil {
+				return err
 			}
 			if _, err := tx.Exec(`DROP VIEW ` + quotedIdentifier(name)); err != nil {
 				return fmt.Errorf("drop old view: %w", err)

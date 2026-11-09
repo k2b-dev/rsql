@@ -661,12 +661,18 @@ func (h *apiHandler) bulkDeleteRows(w http.ResponseWriter, r *http.Request, ns, 
 }
 
 func (h *apiHandler) query(w http.ResponseWriter, r *http.Request, ns string) {
+	r.Body = http.MaxBytesReader(w, r.Body, sqlite.MaxSQLRequestBytes)
 	var req sqlite.QueryRequest
-	if err := decodeJSONBody(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+	if err := decodeSQLBody(r, &req); err != nil {
+		var size *http.MaxBytesError
+		if errors.As(err, &size) {
+			writeError(w, 413, "sql_limit_exceeded", "SQL request exceeds 1 MiB")
+		} else {
+			writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		}
 		return
 	}
-	result, err := h.service.Query(ns, req)
+	result, err := h.service.QueryContext(r.Context(), ns, req)
 	if err != nil {
 		writeServiceError(w, err)
 		return

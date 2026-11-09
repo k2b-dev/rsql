@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -94,54 +93,12 @@ func ExecuteTransaction(ctx context.Context, path string, cfg domain.NamespaceCo
 	if strings.EqualFold(cfg.JournalMode, "off") {
 		return out, nil, domain.NewError(domain.ErrSQLForbidden, 400, "SQL writes require a journal mode supported by defensive SQLite")
 	}
-	file := &url.URL{Scheme: "file", Path: path}
-	db, err := sql.Open("sqlite", file.String()+"?_defensive=true&_pragma=trusted_schema(OFF)&_pragma=temp_store(MEMORY)")
+	db, conn, policy, err := openSQLConnection(ctx, path, cfg, false)
 	if err != nil {
 		return out, nil, err
 	}
 	defer db.Close()
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
-	// SQLite's busy handler must also remain within the request's time budget.
-	if cfg.BusyTimeout <= 0 || cfg.BusyTimeout > 1000 {
-		cfg.BusyTimeout = 1000
-	}
-	if err = ApplyNamespaceConfigContext(ctx, db, cfg); err != nil {
-		return out, nil, err
-	}
-	conn, err := db.Conn(ctx)
-	if err != nil {
-		return out, nil, err
-	}
 	defer conn.Close()
-	for _, limit := range [][2]int{
-		{sqlite3.SQLITE_LIMIT_LENGTH, MaxSQLResultBytes},
-		{sqlite3.SQLITE_LIMIT_SQL_LENGTH, MaxSQLBytes},
-		{sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER, MaxSQLParams},
-		{sqlite3.SQLITE_LIMIT_ATTACHED, 0},
-		{sqlite3.SQLITE_LIMIT_EXPR_DEPTH, 100},
-		{sqlite3.SQLITE_LIMIT_COLUMN, 256},
-		{sqlite3.SQLITE_LIMIT_COMPOUND_SELECT, 100},
-		{sqlite3.SQLITE_LIMIT_LIKE_PATTERN_LENGTH, 4096},
-		{sqlite3.SQLITE_LIMIT_VDBE_OP, 100000},
-	} {
-		if _, err = driver.Limit(conn, limit[0], limit[1]); err != nil {
-			return out, nil, err
-		}
-	}
-	policy, err := loadSQLPolicy(ctx, conn)
-	if err != nil {
-		return out, nil, err
-	}
-	if err = conn.Raw(func(c any) error {
-		a, ok := c.(driver.AuthorizerRegisterer)
-		if !ok {
-			return fmt.Errorf("SQLite authorizer unavailable")
-		}
-		return a.RegisterAuthorizer(policy.authorize)
-	}); err != nil {
-		return out, nil, err
-	}
 	control := func(ctx context.Context, command string) error {
 		policy.control = true
 		defer func() { policy.control = false }()
@@ -193,7 +150,7 @@ func ExecuteTransaction(ctx context.Context, path string, cfg domain.NamespaceCo
 	if err = ctx.Err(); err != nil {
 		return TransactionResult{}, nil, err
 	}
-	if err = control(ctx, "COMMIT"); err != nil {
+	if err = commitSQL(ctx, control); err != nil {
 		return TransactionResult{}, nil, &StatementError{len(req.Statements) - 1, err}
 	}
 	for _, table := range tables {
@@ -202,7 +159,23 @@ func ExecuteTransaction(ctx context.Context, path string, cfg domain.NamespaceCo
 	return out, changes, nil
 }
 
+// commitSQL has a single cancellation boundary before COMMIT. Once SQLite starts
+// committing, cancellation must not turn a durable success into a retryable error.
+func commitSQL(ctx context.Context, control func(context.Context, string) error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return control(context.WithoutCancel(ctx), "COMMIT")
+}
+
 func executeSQLStatement(ctx context.Context, conn *sql.Conn, policy *sqlPolicy, st TransactionStatement, budget *resultBudget) (StatementResult, error) {
+	if err := boundSQLResult(conn, st.SQL, budget.bytes); err != nil {
+		return StatementResult{}, policy.sqlError(err)
+	}
+	defer func() { _, _ = driver.Limit(conn, sqlite3.SQLITE_LIMIT_LENGTH, MaxSQLResultBytes) }()
+	if err := ctx.Err(); err != nil {
+		return StatementResult{}, err
+	}
 	params := make([]any, len(st.Params))
 	for i, p := range st.Params {
 		if n, ok := p.(json.Number); ok {
@@ -285,6 +258,8 @@ func validateSQLStatement(st TransactionStatement) error {
 			quote = c
 		case '[':
 			quote = ']'
+		case '$', '@', ':', '#':
+			return domain.NewError(domain.ErrSQLForbidden, 400, "only positional SQL parameters are accepted")
 		case ';':
 			if i != len(q)-1 {
 				return domain.NewError(domain.ErrSQLForbidden, 400, "one SQL statement per entry is required")
@@ -323,14 +298,32 @@ func (b *resultBudget) scan(rows *sql.Rows) ([]map[string]any, error) {
 			return nil, err
 		}
 		row := make(map[string]any, len(cols))
+		rowBytes := 2
 		for i, col := range cols {
-			row[col] = normalizeDBValue(values[i])
+			// Bound before copying byte values or JSON escaping (up to 6x).
+			var size int
+			switch v := values[i].(type) {
+			case []byte:
+				size = len(v)
+			case string:
+				size = len(v)
+			}
+			if size > max(0, (b.bytes-rowBytes-2)/6) {
+				return nil, domain.NewError(domain.ErrSQLLimitExceeded, 413, "SQL value exceeds remaining result budget")
+			}
+			value := normalizeDBValue(values[i])
+			encoded, err := json.Marshal(value)
+			if err != nil {
+				return nil, err
+			}
+			key, _ := json.Marshal(col)
+			rowBytes += len(key) + len(encoded) + 2
+			if rowBytes > b.bytes {
+				return nil, domain.NewError(domain.ErrSQLLimitExceeded, 413, "SQL results exceed 4 MiB")
+			}
+			row[col] = value
 		}
-		encoded, err := json.Marshal(row)
-		if err != nil {
-			return nil, err
-		}
-		b.bytes -= len(encoded) + 1
+		b.bytes -= rowBytes + 1
 		if b.bytes < 0 {
 			return nil, domain.NewError(domain.ErrSQLLimitExceeded, 413, "SQL results exceed 4 MiB")
 		}

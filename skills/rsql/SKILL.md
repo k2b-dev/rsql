@@ -86,7 +86,8 @@ Database and CSV imports remain administrative operations.
 
 - Prefer row APIs for ordinary application CRUD.
 - Use the shared filter grammar for lists, bulk mutations, and CSV export.
-- Use parameterized read-only SQL for joins and aggregates.
+- Use parameterized read-only SQL for joins and aggregates. Read-only queries
+  share SQL authorization, deadlines, and result budgets with transactions.
 - Use `query.exec({ sql, params })` for bound writes and `query.transaction` for
   atomic statements. Transaction entries default to `mode: "exec"`; use
   `mode: "query"` for rows or `RETURNING`. Never emulate a transaction with

@@ -86,7 +86,8 @@ stand in for identifiers.
 
 Each entry contains one statement. A trailing semicolon is accepted; SQL
 comments and multiple statements in one entry are rejected. Semicolons inside
-quoted values are allowed.
+quoted values are allowed. Use positional `?` or `?NNN` parameters; named
+parameters are not accepted.
 
 The connection authorizer permits ordinary namespace DML, tables, indexes,
 views, and table alterations. It denies:
@@ -96,8 +97,10 @@ views, and table alterations. It denies:
 - internal objects beginning with `_`, including namespace configuration;
 - extension loading, filesystem functions, and functions outside the built-in
   allowlist in `internal/store/sqlite/sql_policy.go`;
-- changes to tables or views owned by the structured schema API. Use that API
-  for their DDL so its metadata remains consistent.
+- changes to tables, views, or indexes owned by the structured schema API,
+  including indirect changes through renames or removed dependencies. Use that
+  API for their DDL so its metadata remains consistent;
+- eponymous virtual tables other than `json_each` and `json_tree`.
 
 Raw DML uses SQLite constraints rather than the structured row API's logical
 type, formula, read-only-column, or timestamp rules. Tables with internal FTS
@@ -122,20 +125,33 @@ occupancy. They are fixed API limits, independent of client settings.
 | Statements per transaction | 1–100 |
 | Result rows across all query entries | 10,000 |
 | Encoded result row data across all query entries | 4 MiB |
-| SQLite value or row | 4 MiB |
+| SQLite value or row for statements without result columns | 4 MiB |
+| SQLite value or row for statements with result columns | remaining result bytes / (6 × column count), rounded down |
 | Columns / expression depth / compound SELECT terms | 256 / 100 / 100 |
 | LIKE/GLOB pattern / compiled VM instructions | 4,096 bytes / 100,000 |
 | Per-statement execution | namespace `query_timeout` milliseconds, default 10,000; at most 30,000 |
 | Entire SQL request, including writer wait | 30 seconds |
 
+Result metadata is prepared before execution. The per-value limit reserves
+worst-case JSON escaping for every output column, even when output is discarded
+in exec mode. This conservative limit also applies to intermediate values and
+rows; select fewer columns or return smaller values when it is exceeded.
+
+The existing read-only `/query` route uses the same request, statement, result,
+and execution budgets. Its batches remain sequential and non-atomic. Structured
+view definitions are compiled under the read policy before being stored.
+
 SQLite busy waits on the isolated SQL connection are capped at one second.
-Cancellation rolls back uncommitted work. HTTP/proxy deadlines can be shorter
+Cancellation before the final commit phase rolls back the work. Once commit
+starts, it completes without the request's cancellation signal so a durable
+success is not reported as a timeout. HTTP/proxy deadlines can be shorter
 than the SQL budget; set them to allow enough time to receive the result.
 Limits do not replace host CPU, memory, disk, and request-concurrency controls.
 
 The existing page-granular `config.max_db_size` applies to writes, indexes,
 schema changes, and their changelog records. A full namespace returns HTTP
-`507`, `quota_exceeded`. WAL/SHM files remain outside this page quota.
+`507`, `quota_exceeded`. WAL/SHM files and temporary sort files remain outside this page quota. Sorters
+use temporary files rather than retaining their entire input in memory.
 
 | Error | Status | Recovery |
 | --- | --- | --- |
@@ -155,7 +171,8 @@ event for each affected table, or `schema_change` for a schema mutation. Events
 include `detail: {"source":"sql"}` and the transaction's optional `_meta`.
 These are conservative invalidations, not reconstructed row images: consumers
 should refetch, and a statement matching zero rows may still invalidate a table.
-Dependent views receive the existing `source_changed` notifications.
+Structured views with tracked dependencies receive the existing
+`source_changed` notifications.
 
 Schema changes also append `action: "sql"` records to `/changelog` in the same
 transaction. Rollbacks emit no events and retain no schema records. SSE remains
