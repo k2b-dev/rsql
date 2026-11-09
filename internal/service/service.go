@@ -1080,12 +1080,14 @@ func (s *Service) Query(ns string, req sqlite.QueryRequest) (any, error) {
 
 // QueryContext propagates client cancellation into the bounded read-only engine.
 func (s *Service) QueryContext(ctx context.Context, ns string, req sqlite.QueryRequest) (any, error) {
+	ctx, cancel := context.WithTimeout(ctx, sqlite.MaxSQLDuration)
+	defer cancel()
 	path, err := s.pathForNamespace(ns)
 	if err != nil {
 		return nil, err
 	}
 	var out any
-	err = s.ns.WithRead(ns, path, func(db *sql.DB) error {
+	err = s.ns.WithReadContext(ctx, ns, path, func(db *sql.DB) error {
 		cfg := defaultNamespaceConfig()
 		if _, err := sqlite.GetMeta(db, "namespace_config", "self", &cfg); err != nil {
 			return err
@@ -1101,7 +1103,7 @@ func (s *Service) QueryContext(ctx context.Context, ns string, req sqlite.QueryR
 		if strings.Contains(err.Error(), "sql_not_read_only") {
 			return nil, domain.NewError(domain.ErrSQLNotReadOnly, 400, "Only read-only SELECT queries are allowed")
 		}
-		return nil, mapErr(err)
+		return nil, mapSQLError(err)
 	}
 	return out, nil
 }

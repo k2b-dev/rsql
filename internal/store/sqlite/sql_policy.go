@@ -30,7 +30,7 @@ glob group_concat hex if ifnull iif instr julianday lag last_insert_rowid
 last_value lead length like likelihood likely ln log log10 log2 lower ltrim
 max min mod nth_value ntile nullif octet_length percent_rank pi pow power
 printf quote random randomblob rank replace round row_number rtrim sign sin
-cos tan asin acos atan atan2 sinh cosh tanh asinh acosh atanh sqrt exp ceil
+cos tan asin acos atan atan2 sinh cosh tanh asinh acosh atanh sqrt exp ceil degrees radians
 ceiling floor trunc soundex sqlite_source_id sqlite_version strftime string_agg
 substr substring sum time timediff total total_changes trim typeof unhex
 unicode unixepoch unlikely upper zeroblob
@@ -46,7 +46,17 @@ sqlite_rename_quotefix`) {
 	return m
 }()
 
+// Reserve the eponymous modules compiled into this SQLite build. CTE names
+// need not exist in sqlite_schema (count(*) can authorize a CTE-level read).
 func sqlObject(name string) bool {
+	lower := strings.ToLower(name)
+	if strings.HasPrefix(lower, "pragma_") {
+		return false
+	}
+	switch lower {
+	case "dbstat", "fts5", "fts5vocab", "geopoly", "rtree", "rtree_i32":
+		return false
+	}
 	return identRe.MatchString(name) && !strings.HasPrefix(name, "_") && !strings.HasPrefix(strings.ToLower(name), "sqlite_")
 }
 
@@ -74,7 +84,7 @@ func (p *sqlPolicy) authorize(action driver.AuthorizerActionCode, a, b, db, sour
 	case driver.AuthFunction:
 		allow = sqlFunctions[strings.ToLower(b)]
 	case driver.AuthRead:
-		allow = (sqlObject(a) && (p.existing[a] || hasSQLChange(p.changes, a) || a == "json_each" || a == "json_tree")) || a == "sqlite_master" || a == "sqlite_schema" || (a == "sqlite_sequence" && p.schema)
+		allow = sqlObject(a) || a == "sqlite_master" || a == "sqlite_schema" || (a == "sqlite_sequence" && p.schema)
 	case driver.AuthInsert, driver.AuthUpdate, driver.AuthDelete:
 		// SQLite itself writes its schema catalog for DDL. Defensive mode prevents
 		// explicit catalog mutation, and writable_schema cannot be enabled.
@@ -121,11 +131,6 @@ func (p *sqlPolicy) authorize(action driver.AuthorizerActionCode, a, b, db, sour
 		return p.deny()
 	}
 	return driver.AuthorizerOK
-}
-
-func hasSQLChange(changes map[string]bool, name string) bool {
-	_, ok := changes[name]
-	return ok
 }
 
 func (p *sqlPolicy) deny() driver.AuthorizerReturnCode { p.denied = true; return driver.AuthorizerDeny }
@@ -223,7 +228,7 @@ func validateSQLSchema(ctx context.Context, conn *sql.Conn, p *sqlPolicy) error 
 			rows.Close()
 			return err
 		}
-		seen[name] = true
+		seen[strings.ToLower(name)] = true
 		original, managed := p.managedSQL[name]
 		if (managed && definition != original) || (!managed && p.managed[strings.ToLower(owner)]) {
 			rows.Close()
@@ -262,7 +267,7 @@ func validateSQLSchema(ctx context.Context, conn *sql.Conn, p *sqlPolicy) error 
 		return err
 	}
 	for name := range p.managedSQL {
-		if !seen[name] {
+		if !seen[strings.ToLower(name)] {
 			return domain.NewError(domain.ErrSQLForbidden, 400, "SQL cannot remove structured schema objects")
 		}
 	}
@@ -305,7 +310,7 @@ func validateSQLSchema(ctx context.Context, conn *sql.Conn, p *sqlPolicy) error 
 				fk.Close()
 				return err
 			}
-			if !sqlObject(target) || (p.managed[strings.ToLower(table)] && !seen[target]) {
+			if !sqlObject(target) || (p.managed[strings.ToLower(table)] && !seen[strings.ToLower(target)]) {
 				fk.Close()
 				return domain.NewError(domain.ErrSQLForbidden, 400, "foreign keys cannot reference internal objects")
 			}

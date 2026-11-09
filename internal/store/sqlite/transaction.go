@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	driver "modernc.org/sqlite"
 	sqlite3 "modernc.org/sqlite/lib"
@@ -169,7 +170,7 @@ func commitSQL(ctx context.Context, control func(context.Context, string) error)
 }
 
 func executeSQLStatement(ctx context.Context, conn *sql.Conn, policy *sqlPolicy, st TransactionStatement, budget *resultBudget) (StatementResult, error) {
-	if err := boundSQLResult(conn, st.SQL, budget.bytes); err != nil {
+	if err := boundSQLResult(conn, st.SQL); err != nil {
 		return StatementResult{}, policy.sqlError(err)
 	}
 	defer func() { _, _ = driver.Limit(conn, sqlite3.SQLITE_LIMIT_LENGTH, MaxSQLResultBytes) }()
@@ -300,28 +301,16 @@ func (b *resultBudget) scan(rows *sql.Rows) ([]map[string]any, error) {
 		row := make(map[string]any, len(cols))
 		rowBytes := 2
 		for i, col := range cols {
-			// Bound before copying byte values or JSON escaping (up to 6x).
-			var size int
-			switch v := values[i].(type) {
-			case []byte:
-				size = len(v)
-			case string:
-				size = len(v)
-			}
-			if size > max(0, (b.bytes-rowBytes-2)/6) {
-				return nil, domain.NewError(domain.ErrSQLLimitExceeded, 413, "SQL value exceeds remaining result budget")
-			}
-			value := normalizeDBValue(values[i])
-			encoded, err := json.Marshal(value)
+			// Count escaping before copying driver bytes or retaining this row.
+			valueBytes, err := sqlJSONValueSize(values[i])
 			if err != nil {
 				return nil, err
 			}
-			key, _ := json.Marshal(col)
-			rowBytes += len(key) + len(encoded) + 2
+			rowBytes += sqlJSONStringSize(col) + valueBytes + 2
 			if rowBytes > b.bytes {
 				return nil, domain.NewError(domain.ErrSQLLimitExceeded, 413, "SQL results exceed 4 MiB")
 			}
-			row[col] = value
+			row[col] = normalizeDBValue(values[i])
 		}
 		b.bytes -= rowBytes + 1
 		if b.bytes < 0 {
@@ -331,4 +320,55 @@ func (b *resultBudget) scan(rows *sql.Rows) ([]map[string]any, error) {
 		out = append(out, row)
 	}
 	return out, rows.Err()
+}
+
+// encoding/json's invalid UTF-8 replacement differs between Go releases.
+var sqlInvalidUTF8Bytes = func() int {
+	encoded, _ := json.Marshal(string([]byte{0xff}))
+	return len(encoded) - 2
+}()
+
+// sqlJSONStringSize matches encoding/json's default string escaping without
+// allocating an encoded copy (including HTML, invalid UTF-8 and U+2028/2029).
+func sqlJSONStringSize[T ~string | ~[]byte](value T) int {
+	n := 2
+	for i := 0; i < len(value); i++ {
+		c := value[i]
+		switch c {
+		case '\\', '"', '\b', '\f', '\n', '\r', '\t':
+			n += 2
+		case '<', '>', '&':
+			n += 6
+		default:
+			if c < 0x20 {
+				n += 6
+			} else if c < utf8.RuneSelf {
+				n++
+			} else {
+				r, width := utf8.DecodeRuneInString(string(value[i:min(i+utf8.UTFMax, len(value))]))
+				if r == utf8.RuneError && width == 1 {
+					n += sqlInvalidUTF8Bytes
+				} else if r == '\u2028' || r == '\u2029' {
+					n += 6
+				} else {
+					n += width
+				}
+				i += width - 1
+			}
+		}
+	}
+	return n
+}
+
+func sqlJSONValueSize(value any) (int, error) {
+	switch v := value.(type) {
+	case string:
+		return sqlJSONStringSize(v), nil
+	case []byte:
+		// Row APIs have always exposed database blobs as strings.
+		return sqlJSONStringSize(v), nil
+	default:
+		encoded, err := json.Marshal(value)
+		return len(encoded), err
+	}
 }

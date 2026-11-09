@@ -39,6 +39,7 @@ type handle struct {
 	poolsMu    sync.Mutex
 	lifecycle  sync.RWMutex
 	writeSlot  chan struct{}
+	readSlots  chan struct{}
 	lastUsed   int64
 	referenced atomic.Bool
 	element    *list.Element
@@ -266,7 +267,7 @@ func (m *Manager) openHandle(name, path string) (*handle, error) {
 		}
 	}
 
-	h := &handle{name: name, path: path, writeSlot: make(chan struct{}, 1)}
+	h := &handle{name: name, path: path, writeSlot: make(chan struct{}, 1), readSlots: make(chan struct{}, m.cfg.ReadConns)}
 	h.touch()
 	return h, nil
 }
@@ -327,6 +328,12 @@ func (m *Manager) writePool(h *handle) (*sql.DB, error) {
 
 // WithRead executes fn under the pinned namespace read lock.
 func (m *Manager) WithRead(name, path string, fn func(*sql.DB) error) error {
+	return m.WithReadContext(context.Background(), name, path, fn)
+}
+
+// WithReadContext bounds both pooled and isolated SQL readers by ReadConns.
+// Waiting for a slot is cancellable and keeps the namespace handle pinned.
+func (m *Manager) WithReadContext(ctx context.Context, name, path string, fn func(*sql.DB) error) error {
 	h, err := m.getOrOpenPinned(name, path)
 	if err != nil {
 		return err
@@ -335,6 +342,15 @@ func (m *Manager) WithRead(name, path string, fn func(*sql.DB) error) error {
 		h.lifecycle.RUnlock()
 		m.trimExcess()
 	}()
+	select {
+	case h.readSlots <- struct{}{}:
+		defer func() { <-h.readSlots }()
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	readDB, err := m.readPool(h)
 	if err != nil {
 		return err

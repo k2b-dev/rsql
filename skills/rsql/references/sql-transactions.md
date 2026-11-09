@@ -116,20 +116,24 @@ occupancy. They are fixed API limits, independent of client settings.
 | Result rows across all query entries | 10,000 |
 | Encoded result row data across all query entries | 4 MiB |
 | SQLite value or row for statements without result columns | 4 MiB |
-| SQLite value or row for statements with result columns | remaining result bytes / (6 × column count), rounded down |
+| SQLite value or row for statements with result columns | 4 MiB / column count, rounded down |
 | Columns / expression depth / compound SELECT terms | 256 / 100 / 100 |
 | LIKE/GLOB pattern / compiled VM instructions | 4,096 bytes / 100,000 |
 | Per-statement execution | namespace `query_timeout` milliseconds, default 10,000; at most 30,000 |
-| Entire SQL request, including writer wait | 30 seconds |
+| Entire SQL request, including reader/writer wait | 30 seconds |
 
-Result metadata is prepared before execution. The per-value limit reserves
-worst-case JSON escaping for every output column, even when output is discarded
-in exec mode. This conservative limit also applies to intermediate values and
-rows; select fewer columns or return smaller values when it is exceeded.
+Result metadata is prepared before execution. The per-value limit bounds the
+combined output registers before SQLite or the driver materializes a wide row,
+even when output is discarded in exec mode. JSON escaping is counted before
+values are copied into the response. The SQLite length limit also applies to
+intermediate values and sort records; select fewer columns or return smaller
+values when it is exceeded. Exec statements use the same fixed value limit
+regardless of earlier query results.
 
 The existing read-only `/query` route uses the same request, statement, result,
-and execution budgets. Its batches remain sequential and non-atomic. Structured
-view definitions are compiled under the read policy before being stored.
+and execution budgets. Its batches remain sequential and non-atomic. The
+`namespace-read-connections` setting also bounds isolated SQL readers; waiting
+for a reader slot counts against the request deadline. Structured view definitions are compiled under the read policy before being stored.
 
 SQLite busy waits on the isolated SQL connection are capped at one second.
 Cancellation before the final commit phase rolls back the work. Once commit
@@ -137,6 +141,13 @@ starts, it completes without the request's cancellation signal so a durable
 success is not reported as a timeout. HTTP/proxy deadlines can be shorter
 than the SQL budget; set them to allow enough time to receive the result.
 Limits do not replace host CPU, memory, disk, and request-concurrency controls.
+
+Read-only response shapes and batch semantics are unchanged. SQL requests that
+exceed the new input, output, or execution budgets now fail with a stable error
+instead of consuming unbounded resources. Review large-value queries and
+application retries before upgrading. Use pagination or exports for larger
+results. Existing stored views are checked transitively by SQL queries; a view
+using forbidden objects or functions must be replaced through the schema API.
 
 The existing page-granular `config.max_db_size` applies to writes, indexes,
 schema changes, and their changelog records. A full namespace returns HTTP

@@ -82,9 +82,9 @@ func setSQLAuthorizer(conn *sql.Conn, fn driver.AuthorizerFn) error {
 }
 
 // ColumnInfo prepares without stepping. Cap every result value before SQLite
-// allocates output registers or the driver copies them. Reserve worst-case JSON
-// escaping for every column, so wide rows cannot multiply the memory budget.
-func boundSQLResult(conn *sql.Conn, query string, remaining int) error {
+// allocates output registers or the driver copies them. Total output registers
+// are bounded by 4 MiB; scan counts JSON escaping before retaining values.
+func boundSQLResult(conn *sql.Conn, query string) error {
 	if _, err := driver.Limit(conn, sqlite3.SQLITE_LIMIT_LENGTH, MaxSQLResultBytes); err != nil {
 		return err
 	}
@@ -107,7 +107,7 @@ func boundSQLResult(conn *sql.Conn, query string, remaining int) error {
 	if len(columns) > 0 {
 		// Keys are bounded by the 64 KiB SQL text / schema budget; scan checks
 		// their exact encoded size before retaining a row.
-		limit = max(1, remaining/(6*len(columns)))
+		limit = max(1, MaxSQLResultBytes/len(columns))
 	}
 	_, err = driver.Limit(conn, sqlite3.SQLITE_LIMIT_LENGTH, limit)
 	return err
